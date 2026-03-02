@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY; // 実行環境で自動付与されます
+console.log("APIキー確認:", apiKey);
 
 // ==========================================
 // サウンドユーティリティ (Web Audio API)
