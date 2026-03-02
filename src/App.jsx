@@ -9,7 +9,7 @@ import {
   Layers, Map, BarChart2, RefreshCcw, Play, Search, Filter, SortDesc
 } from 'lucide-react';
 
-const apiKey = ""; // 実行環境で自動付与されます
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY; // 実行環境で自動付与されます
 
 // ==========================================
 // サウンドユーティリティ (Web Audio API)
