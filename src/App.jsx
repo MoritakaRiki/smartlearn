@@ -10,7 +10,7 @@ import {
   Edit3
 } from 'lucide-react';
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY; // プレビュー環境では自動付与されます。ローカルのVite環境で実行する場合は const apiKey = import.meta.env.VITE_GEMINI_API_KEY; に変更してください。
+const apiKey = ""; // プレビュー環境では自動付与されます。
 
 // ==========================================
 // サウンドユーティリティ (Web Audio API)
@@ -2350,7 +2350,7 @@ ${AI_STRICT_RULES}`;
                 <Sparkles className="w-6 h-6 md:w-8 md:h-8 text-yellow-300 absolute top-0 -right-4 animate-pulse" />
                 <Star className="w-5 h-5 md:w-6 md:h-6 text-yellow-200 absolute bottom-4 -left-4 animate-bounce" />
               </div>
-              <h1 className="text-3xl md:text-4xl font-extrabold mb-2 md:mb-3 tracking-tight">SmartLearnへようこそ</h1>
+              <h1 className="text-3xl md:text-4xl font-extrabold mb-2 md:mb-3 tracking-tight">CycLearnへようこそ</h1>
               <p className="text-blue-100 font-bold text-sm md:text-lg">プロファイリングを実行します。情報を入力してください。</p>
             </div>
             
@@ -2444,7 +2444,7 @@ ${AI_STRICT_RULES}`;
                 <GraduationCap size={28} />
               </div>
               <span className="text-2xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-indigo-700">
-                SmartLearn
+                CycLearn
               </span>
             </div>
             
@@ -2482,7 +2482,7 @@ ${AI_STRICT_RULES}`;
                 <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg text-white">
                   <GraduationCap size={20} />
                 </div>
-                <span className="font-black text-lg text-indigo-900">SmartLearn</span>
+                <span className="font-black text-lg text-indigo-900">CycLearn</span>
               </div>
             </div>
 
