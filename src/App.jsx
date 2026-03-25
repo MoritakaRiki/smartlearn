@@ -7,31 +7,10 @@ import {
   UserCircle, CheckSquare, Square,
   Award, Timer, Flag, ChevronLeft, Sparkles, Star, Trophy, Crown, 
   Layers, Map, BarChart2, RefreshCcw, Play, Search, Filter, SortDesc,
-  Edit3, Trash2, Edit, FolderPlus, List as ListIcon, Save, Folder,
-  Settings, Key, Cloud
+  Edit3
 } from 'lucide-react';
 
-// === Firebase Imports ===
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, doc, setDoc, collection, onSnapshot, addDoc, updateDoc, deleteDoc, writeBatch } from "firebase/firestore";
-
-// === Firebase Initialization ===
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
-};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY; // プレビュー環境では自動付与されます。ローカルのVite環境で実行する場合は const apiKey = import.meta.env.VITE_GEMINI_API_KEY; に変更してください。
 
 // ==========================================
 // サウンドユーティリティ (Web Audio API)
@@ -76,7 +55,7 @@ const playSound = (type) => {
       setTimeout(() => playTone(783.99, 'sine', 0.15, 0.1), 300); 
       setTimeout(() => playTone(1046.50, 'sine', 0.5, 0.15), 450); 
     }
-  } catch(e) { console.log("Audio not supported"); }
+  } catch(e) { console.log("Audio not supported or disabled"); }
 };
 
 // ==========================================
@@ -124,105 +103,102 @@ const AI_STRICT_RULES = `
 【厳守事項】
 1. 解答の正確性: 生成した問題と解答に論理的・計算的な誤りがないか厳密にダブルチェックしてください。
 2. 問題の制約: 図形や画像がないと解けない問題は絶対に避け、テキスト・数式のみで完全に状況が把握し解答できる問題のみを出題してください。
-3. 出力サイズ制限: システムの文字数制限による出力の途切れを防ぐため、解説文は長文を避け、1〜2文程度で極力簡潔に出力してください。
 `;
-
-// API制限時(401)用のモックデータ生成関数
-const getMockData = (isJson, schemaType) => {
-  if (!isJson) return "【API通信制限中】現在AIサーバーへの接続が制限されています(401エラー)。\n設定⚙️からご自身のGemini APIキーを入力することでこの制限を解除できます。";
-  if (schemaType === 'quiz') return [{ id: Date.now(), question: "【API制限中】設定からAPIキーを入力してください。日本の首都は？", options: [{ text: "東京都", errorCategory: "correct" }, { text: "大阪府", errorCategory: "concept" }, { text: "京都府", errorCategory: "prerequisite" }, { text: "北海道", errorCategory: "careless" }], answer: "東京都", explanation: "APIキーを設定すると、正常に問題が生成されます。", weaknessTag: "システム設定" }];
-  if (schemaType === 'exam') return [{ id: Date.now(), theme: "【API制限中】設定画面からAPIキーを入力してください。", questions: [{ id: Date.now()+1, question: "API制限を解除するには？", options: [{ text: "設定画面からAPIキーを入力", errorCategory: "correct" }, { text: "諦める", errorCategory: "careless" }, { text: "アプリを消す", errorCategory: "concept" }, { text: "祈る", errorCategory: "reading" }], answer: "設定画面からAPIキーを入力", explanation: "キーを設定することで正常動作します。", weaknessTag: "システム設定" }] }];
-  if (schemaType === 'flashcards') return [{ front: "【通信エラー】", back: "設定画面からAPIキーを入力してください。" }, { front: "API Key", back: "システムを利用するための鍵。" }];
-  return [];
-};
 
 // --- API連携関数 ---
 const generateGeminiContent = async (prompt, isJson = false, schemaType = 'quiz') => {
-  const userKey = localStorage.getItem('gemini_api_key');
-  const actualKey = userKey || "";
-  const modelName = userKey ? "gemini-2.5-flash" : "gemini-2.5-flash-preview-09-2025";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${actualKey}`;
-  
-  const payload = { 
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    systemInstruction: { parts: [{ text: AI_STRICT_RULES }] }
-  };
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const payload = { contents: [{ parts: [{ text: prompt }] }] };
 
   if (isJson) {
-    if (schemaType !== 'flashcards') {
-        payload.contents[0].parts[0].text += `\n\n【重要: 出力フォーマット】
-以下の条件に必ず従い、純粋なJSON配列（ARRAY）のみを出力してください。マークダウン(\`\`\`jsonなど)や説明文は一切含めないでください。
-
-[要求するオブジェクトの構造例（${schemaType === 'exam' ? '模試' : 'クイズ'}用）]
-{
-  "id": 数値,
-  ${schemaType === 'exam' ? '"theme": "共通のテーマや長文",\n  "questions": [以下の構造の配列]' : ''}
-  "question": "問題文",
-  "options": [
-    { "text": "選択肢1", "errorCategory": "correct" },
-    { "text": "選択肢2", "errorCategory": "concept" },
-    { "text": "選択肢3", "errorCategory": "prerequisite" },
-    { "text": "選択肢4", "errorCategory": "careless" }
-  ],
-  "answer": "正解の選択肢のtextと完全一致する文字列",
-  "explanation": "解説文",
-  "weaknessTag": "弱点タグ"
-}`;
+    let responseSchema;
+    if (schemaType === 'exam') {
+      responseSchema = {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "NUMBER" },
+            theme: { type: "STRING" },
+            questions: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  id: { type: "NUMBER" },
+                  question: { type: "STRING" },
+                  options: { type: "ARRAY", items: { type: "STRING" } },
+                  answer: { type: "STRING" },
+                  explanation: { type: "STRING" },
+                  weaknessTag: { type: "STRING" }
+                },
+                required: ["id", "question", "options", "answer", "explanation", "weaknessTag"]
+              }
+            }
+          },
+          required: ["id", "theme", "questions"]
+        }
+      };
+    } else if (schemaType === 'flashcards') {
+      responseSchema = {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            front: { type: "STRING" },
+            back: { type: "STRING" }
+          },
+          required: ["front", "back"]
+        }
+      };
+    } else {
+      responseSchema = {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "NUMBER" },
+            question: { type: "STRING" },
+            options: { type: "ARRAY", items: { type: "STRING" } },
+            answer: { type: "STRING" },
+            explanation: { type: "STRING" },
+            weaknessTag: { type: "STRING" }
+          },
+          required: ["id", "question", "options", "answer", "explanation", "weaknessTag"]
+        }
+      };
     }
+
+    payload.generationConfig = {
+      responseMimeType: "application/json",
+      responseSchema: responseSchema
+    };
   }
 
-  let lastError;
-  const retries = [1000, 2000, 4000];
+  const retries = [1000, 2000, 4000, 8000, 16000];
   for (let i = 0; i < retries.length; i++) {
     try {
       const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          const errMsg = errorData.error?.message || response.statusText || "Unknown error";
-          throw new Error(`API Error (${response.status}): ${errMsg}`);
+          const errorData = await response.json();
+          throw new Error(`API Error: ${errorData.error?.message || response.status}`);
       }
       const data = await response.json();
-      let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (!text) throw new Error("API returned empty response");
-
-      if (isJson) {
-        text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
-        const match = text.match(/\[[\s\S]*\]/) || text.match(/\{[\s\S]*\}/);
-        if (match) text = match[0];
-        
-        const parsed = JSON.parse(text);
-        return Array.isArray(parsed) ? parsed : (parsed.items || []);
-      }
-      return text;
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      return isJson ? JSON.parse(text) : text;
     } catch (e) {
-      lastError = e;
-      if (e.message && (e.message.includes('401') || e.message.includes('403') || e.message.includes('400'))) {
-        if (!userKey) {
-          console.warn("API Auth Error detected. Using mock data fallback.");
-          return getMockData(isJson, schemaType);
-        } else {
-          throw new Error("入力されたAPIキーが無効、またはアクセス制限にかかっています。設定からキーを確認してください。");
-        }
-      }
       if (i === retries.length - 1) throw e;
       await new Promise(r => setTimeout(r, retries[i]));
     }
   }
-  throw lastError;
 };
 
 const SUBJECTS = ['国語', '算数・数学', '理科', '社会', '英語', '情報'];
 const GRADES = ['小学4年', '小学5年', '小学6年', '中学1年', '中学2年', '中学3年', '高校1年', '高校2年', '高校3年'];
 
 export default function App() {
-  // === Firebase Auth State ===
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [isSetupComplete, setIsSetupComplete] = useState(null); // null means loading profile
-
+  const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [userProfile, setUserProfile] = useState({ 
-    username: '',
     grade: '中学1年', 
     strongSubjects: [], 
     weakSubjects: [], 
@@ -235,59 +211,43 @@ export default function App() {
   const [weaknesses, setWeaknesses] = useState([]);
   const [mistakes, setMistakes] = useState([]); 
   const [stats, setStats] = useState({ totalQuestions: 0, correctAnswers: 0 });
-  const [errorStats, setErrorStats] = useState({ concept: 0, prerequisite: 0, careless: 0, reading: 0 });
   const [activityLog, setActivityLog] = useState([
     { day: '月', count: 0 }, { day: '火', count: 0 }, { day: '水', count: 0 },
     { day: '木', count: 0 }, { day: '金', count: 0 }, { day: '土', count: 0 }, { day: '日', count: 0 }
   ]);
-  const [todos, setTodos] = useState([]);
+  const [todos, setTodos] = useState([
+    { id: 1, text: '基礎用語の確認を行う', completed: false },
+    { id: 2, text: '弱点分野の演習を1回実施する', completed: false }
+  ]);
   const [newTodo, setNewTodo] = useState('');
   
+  // 動的ロードマップ用のフラグ
   const [hasDoneRevenge, setHasDoneRevenge] = useState(false);
   const [hasDoneExam, setHasDoneExam] = useState(false);
-
-  const [showSettings, setShowSettings] = useState(false);
-  const [tempApiKey, setTempApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
-
-  const [folders, setFolders] = useState(['未分類', '定期テスト', '受験対策']);
-  const [showFolderInput, setShowFolderInput] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
 
   const [materials, setMaterials] = useState([]);
   const [activeMaterialId, setActiveMaterialId] = useState(null);
   const [noteViewState, setNoteViewState] = useState('list');
   const [newMatTitle, setNewMatTitle] = useState('');
   const [newMatSubject, setNewMatSubject] = useState(SUBJECTS[0]);
-  const [newMatFolder, setNewMatFolder] = useState('未分類');
   const [newMatContent, setNewMatContent] = useState('');
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
-  const [isEditingNote, setIsEditingNote] = useState(false); 
-  const [editNoteData, setEditNoteData] = useState(null);
-  const [noteToDelete, setNoteToDelete] = useState(null);
-  const [filterNoteFolder, setFilterNoteFolder] = useState('すべて');
+  const [isEditingSubject, setIsEditingSubject] = useState(false); 
+  const [isGeneratingCards, setIsGeneratingCards] = useState(false);
+  
+  // 単語帳直接生成用のステート追加
+  const [showFlashcardGenerator, setShowFlashcardGenerator] = useState(false);
+  const [flashcardGenSubject, setFlashcardGenSubject] = useState(SUBJECTS[0]);
+  const [flashcardPrompt, setFlashcardPrompt] = useState('');
+  const [isGeneratingCardsDirectly, setIsGeneratingCardsDirectly] = useState(false);
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSubject, setFilterSubject] = useState('すべて');
   const [sortOrder, setSortOrder] = useState('newest');
-
-  const [flashcards, setFlashcards] = useState([]);
-  const [flashcardTab, setFlashcardTab] = useState('study');
-  const [flashcardSubject, setFlashcardSubject] = useState('すべて');
-  const [flashcardTheme, setFlashcardTheme] = useState('すべて');
-  const [filterCardFolder, setFilterCardFolder] = useState('すべて');
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
-  const [isCardFlipped, setIsCardFlipped] = useState(false);
-  const [isGeneratingCards, setIsGeneratingCards] = useState(false);
-  const [showFlashcardGenerator, setShowFlashcardGenerator] = useState(false);
-  const [flashcardGenSubject, setFlashcardGenSubject] = useState(SUBJECTS[0]);
-  const [flashcardGenFolder, setFlashcardGenFolder] = useState('未分類');
-  const [flashcardPrompt, setFlashcardPrompt] = useState('');
-  const [isGeneratingCardsDirectly, setIsGeneratingCardsDirectly] = useState(false);
-  const [isEditingCardId, setIsEditingCardId] = useState(null);
-  const [editCardData, setEditCardData] = useState(null);
-
+  
   const [studyMode, setStudyMode] = useState('custom');
   const [customSettings, setCustomSettings] = useState({ grade: '中学1年', subject: '算数・数学', topic: '', difficulty: '標準', count: 'おまかせ' });
-  const [selectedMistakes, setSelectedMistakes] = useState([]); 
+  const [selectedMistakes, setSelectedMistakes] = useState([]); // リベンジで選択された問題
   const [quizState, setQuizState] = useState('start');
   const [quizData, setQuizData] = useState([]);
   const [currentAnswers, setCurrentAnswers] = useState({});
@@ -305,6 +265,16 @@ export default function App() {
   const [examCurrentIndex, setExamCurrentIndex] = useState(0);
   const [examTimeRemaining, setExamTimeRemaining] = useState(0);
 
+  const [flashcards, setFlashcards] = useState([
+    { id: 1, subject: '理科', theme: '植物の仕組み', front: '光合成', back: '植物が光エネルギーを利用して、二酸化炭素と水から有機物と酸素を作り出す反応。', isMemorized: false },
+    { id: 2, subject: '社会', theme: '歴史（近代）', front: '産業革命', back: '18世紀半ばにイギリスで始まった、機械の発明による産業・社会構造の大変革。', isMemorized: false },
+    { id: 3, subject: '英語', theme: '文法', front: '関係代名詞', back: '名詞（先行詞）を修飾する節を作る代名詞。who, which, thatなど。', isMemorized: false }
+  ]);
+  const [flashcardSubject, setFlashcardSubject] = useState('すべて');
+  const [flashcardTheme, setFlashcardTheme] = useState('すべて'); // テーマ用のフィルター
+  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [isCardFlipped, setIsCardFlipped] = useState(false);
+
   const [subjectStats, setSubjectStats] = useState(
     SUBJECTS.reduce((acc, sub) => ({ ...acc, [sub]: { total: 0, correct: 0 } }), {})
   );
@@ -314,98 +284,25 @@ export default function App() {
   const [toast, setToast] = useState({ show: false, message: '', type: 'error' });
   const [showConfetti, setShowConfetti] = useState(false);
 
-  // === Firebase Auth Initialization ===
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (e) {
-        console.error("Auth Error", e);
-        setAuthLoading(false); // In case of error, still remove loading
-      }
-    };
-    initAuth();
-    
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // === Firestore Data Fetching ===
-  useEffect(() => {
-    if (!user) return;
-    const userId = user.uid;
-
-    const profileRef = doc(db, 'artifacts', appId, 'users', userId, 'profile', 'data');
-    const unsubProfile = onSnapshot(profileRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setUserProfile(data.userProfile || userProfile);
-        setStats(data.stats || stats);
-        setErrorStats(data.errorStats || errorStats);
-        setActivityLog(data.activityLog || activityLog);
-        setWeaknesses(data.weaknesses || []);
-        setSubjectStats(data.subjectStats || subjectStats);
-        setFolders(data.folders || ['未分類', '定期テスト', '受験対策']);
-        setHasDoneRevenge(data.hasDoneRevenge || false);
-        setHasDoneExam(data.hasDoneExam || false);
-        setIsSetupComplete(true);
-      } else {
-        setIsSetupComplete(false); // 存在しない場合はセットアップ画面へ
-      }
-    }, (err) => console.error("Profile fetch error:", err));
-
-    const todosRef = collection(db, 'artifacts', appId, 'users', userId, 'todos');
-    const unsubTodos = onSnapshot(todosRef, (snap) => {
-      setTodos(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=> a.createdAt - b.createdAt));
-    }, (err) => console.error(err));
-
-    const materialsRef = collection(db, 'artifacts', appId, 'users', userId, 'materials');
-    const unsubMaterials = onSnapshot(materialsRef, (snap) => {
-      setMaterials(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>b.createdAt - a.createdAt));
-    }, (err) => console.error(err));
-
-    const flashcardsRef = collection(db, 'artifacts', appId, 'users', userId, 'flashcards');
-    const unsubFlashcards = onSnapshot(flashcardsRef, (snap) => {
-      setFlashcards(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>b.createdAt - a.createdAt));
-    }, (err) => console.error(err));
-
-    const mistakesRef = collection(db, 'artifacts', appId, 'users', userId, 'mistakes');
-    const unsubMistakes = onSnapshot(mistakesRef, (snap) => {
-      setMistakes(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>b.createdAt - a.createdAt));
-    }, (err) => console.error(err));
-
-    return () => {
-      unsubProfile(); unsubTodos(); unsubMaterials(); unsubFlashcards(); unsubMistakes();
-    };
-  }, [user]);
-
   const accuracyRate = stats.totalQuestions > 0 ? Math.round((stats.correctAnswers / stats.totalQuestions) * 100) : 0;
   const activeMaterial = materials.find(m => m.id === activeMaterialId);
   
+  // 選択された科目に存在するテーマ（単元）のリストを抽出
   const availableThemes = Array.from(new Set(
-    flashcards.filter(card => flashcardSubject === 'すべて' || card.subject === flashcardSubject).map(card => card.theme).filter(Boolean)
+    flashcards
+      .filter(card => flashcardSubject === 'すべて' || card.subject === flashcardSubject)
+      .map(card => card.theme)
+      .filter(Boolean)
   ));
 
+  // 単語帳のフィルタリング（科目、テーマ、覚えてないもの）
   const pendingFlashcards = flashcards.filter(card => 
     (flashcardSubject === 'すべて' || card.subject === flashcardSubject) && 
     (flashcardTheme === 'すべて' || card.theme === flashcardTheme) &&
-    (filterCardFolder === 'すべて' || (card.folder || '未分類') === filterCardFolder) &&
     !card.isMemorized
   );
 
-  const filteredListCards = flashcards.filter(card => 
-    (flashcardSubject === 'すべて' || card.subject === flashcardSubject) && 
-    (filterCardFolder === 'すべて' || (card.folder || '未分類') === filterCardFolder) &&
-    (flashcardTheme === 'すべて' || card.theme === flashcardTheme)
-  );
-
+  // 動的ロードマップ生成関数
   const getRoadmapSteps = () => {
     const step1Progress = Math.min(100, Math.round((stats.totalQuestions / 15) * 100));
     const step2Progress = step1Progress < 100 ? 0 : Math.min(100, Math.round((mistakes.length / 5) * 100));
@@ -413,10 +310,34 @@ export default function App() {
     const step4Progress = step3Progress < 100 ? 0 : (hasDoneExam ? 100 : 0);
 
     return [
-      { id: 1, title: '学習の第一歩（演習15問）', status: step1Progress >= 100 ? 'completed' : 'current', progress: step1Progress, desc: 'まずは演習問題を15問解いて、学習のペースを掴みましょう。' },
-      { id: 2, title: '弱点の発見（ストック5問）', status: step1Progress < 100 ? 'locked' : (step2Progress >= 100 ? 'completed' : 'current'), progress: step2Progress, desc: 'テストを通じて間違えた問題を5問以上蓄積し、自分の弱点を明らかにします。' },
-      { id: 3, title: 'リベンジによる克服', status: step2Progress < 100 ? 'locked' : (step3Progress >= 100 ? 'completed' : 'current'), progress: step3Progress, desc: '「リベンジ特訓」で間違えた問題の類題に挑戦し、自力で解き切ります。' },
-      { id: 4, title: '実践模試への挑戦', status: step3Progress < 100 ? 'locked' : (step4Progress >= 100 ? 'completed' : 'current'), progress: step4Progress, desc: '制限時間付きの実戦形式の模試を実施し、本番の対応力を養います。' }
+      { 
+        id: 1, 
+        title: '学習の第一歩（演習15問）', 
+        status: step1Progress >= 100 ? 'completed' : 'current', 
+        progress: step1Progress,
+        desc: 'まずは演習問題を15問解いて、学習のペースを掴みましょう。' 
+      },
+      { 
+        id: 2, 
+        title: '弱点の発見（ストック5問）', 
+        status: step1Progress < 100 ? 'locked' : (step2Progress >= 100 ? 'completed' : 'current'), 
+        progress: step2Progress,
+        desc: 'テストを通じて間違えた問題を5問以上蓄積し、自分の弱点を明らかにします。' 
+      },
+      { 
+        id: 3, 
+        title: 'リベンジによる克服', 
+        status: step2Progress < 100 ? 'locked' : (step3Progress >= 100 ? 'completed' : 'current'), 
+        progress: step3Progress,
+        desc: '「リベンジ特訓」で間違えた問題の類題に挑戦し、自力で解き切ります。' 
+      },
+      { 
+        id: 4, 
+        title: '実践模試への挑戦', 
+        status: step3Progress < 100 ? 'locked' : (step4Progress >= 100 ? 'completed' : 'current'), 
+        progress: step4Progress,
+        desc: '制限時間付きの実戦形式の模試を実施し、本番の対応力を養います。' 
+      }
     ];
   };
 
@@ -427,7 +348,7 @@ export default function App() {
   useEffect(() => {
     setCurrentCardIndex(0);
     setIsCardFlipped(false);
-  }, [flashcardSubject, flashcardTheme, filterCardFolder]);
+  }, [flashcardSubject, flashcardTheme]); // テーマが変わった時もリセット
 
   useEffect(() => {
     if (currentCardIndex >= pendingFlashcards.length && pendingFlashcards.length > 0) {
@@ -436,8 +357,7 @@ export default function App() {
   }, [pendingFlashcards.length, currentCardIndex]);
 
   useEffect(() => {
-    setIsEditingNote(false);
-    setNoteToDelete(null);
+    setIsEditingSubject(false);
   }, [activeMaterialId]);
 
   useEffect(() => {
@@ -479,46 +399,13 @@ export default function App() {
     playSound('click');
   };
 
-  // === プロファイル作成（初回起動時）===
-  const finishSetup = async () => {
-    if (!userProfile.grade || !userProfile.username.trim()) {
-      showToast("アカウント名を入力してください。", "error");
-      return;
-    }
+  const finishSetup = () => {
+    if (!userProfile.grade) return;
     playSound('start');
-    
-    const newWeaknesses = userProfile.weakSubjects.length > 0 ? userProfile.weakSubjects.map(s => `${s}全般`) : [];
-    
-    try {
-      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data');
-      await setDoc(profileRef, {
-        userProfile,
-        stats: { totalQuestions: 0, correctAnswers: 0 },
-        errorStats: { concept: 0, prerequisite: 0, careless: 0, reading: 0 },
-        activityLog: [
-          { day: '月', count: 0 }, { day: '火', count: 0 }, { day: '水', count: 0 },
-          { day: '木', count: 0 }, { day: '金', count: 0 }, { day: '土', count: 0 }, { day: '日', count: 0 }
-        ],
-        weaknesses: newWeaknesses,
-        subjectStats: SUBJECTS.reduce((acc, sub) => ({ ...acc, [sub]: { total: 0, correct: 0 } }), {}),
-        folders: ['未分類', '定期テスト', '受験対策'],
-        hasDoneRevenge: false,
-        hasDoneExam: false
-      });
-
-      const batch = writeBatch(db);
-      const todosRef = collection(db, 'artifacts', appId, 'users', user.uid, 'todos');
-      batch.set(doc(todosRef), { text: '基礎用語の確認を行う', completed: false, createdAt: Date.now() });
-      batch.set(doc(todosRef), { text: '弱点分野の演習を1回実施する', completed: false, createdAt: Date.now()+1 });
-      await batch.commit();
-
-      setCustomSettings(prev => ({ ...prev, grade: userProfile.grade }));
-      setChatMessages([{ role: 'ai', text: `${userProfile.username}さん、アカウントの作成が完了しました。私はあなた専用の学習支援AIです。\n学習データは自動的にクラウドに保存されます。不明点があれば質問してください。`}]);
-      setIsSetupComplete(true);
-    } catch(e) {
-      console.error(e);
-      showToast("プロフィールの作成に失敗しました。");
-    }
+    setCustomSettings(prev => ({ ...prev, grade: userProfile.grade }));
+    if (userProfile.weakSubjects.length > 0) setWeaknesses(userProfile.weakSubjects.map(s => `${s}全般`));
+    setChatMessages([{ role: 'ai', text: `初期設定を完了しました。私は学習支援AIです。${userProfile.grade}の学習を論理的かつ効率的にサポートします。\n不明点があれば質問してください。`}]);
+    setIsSetupComplete(true);
   };
 
   const toggleSubject = (type, subject) => {
@@ -529,66 +416,22 @@ export default function App() {
     });
   };
 
-  const toggleTodo = async (id) => {
+  const toggleTodo = (id) => {
     playSound('click');
-    const todo = todos.find(t => t.id === id);
-    if (!todo || !user) return;
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'todos', id), { completed: !todo.completed });
-    } catch(e) { console.error(e); showToast("更新に失敗しました"); }
+    setTodos(todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
   };
 
-  const addTodo = async (e) => {
+  const addTodo = (e) => {
     e.preventDefault();
-    if (!newTodo.trim() || !user) return;
+    if (!newTodo.trim()) return;
     playSound('click');
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'todos'), { text: newTodo, completed: false, createdAt: Date.now() });
-      setNewTodo('');
-    } catch(e) { console.error(e); showToast("追加に失敗しました"); }
+    setTodos([...todos, { id: Date.now(), text: newTodo, completed: false }]);
+    setNewTodo('');
   };
-
-  const addFolder = async (folderName) => {
-    if (folderName.trim() && !folders.includes(folderName.trim()) && user) {
-      const newFolders = [...folders, folderName.trim()];
-      try {
-        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), { folders: newFolders });
-        showToast('フォルダーを追加しました', 'success');
-        setNewFolderName('');
-        setShowFolderInput(false);
-      } catch(e) { console.error(e); showToast("追加に失敗しました"); }
-    }
-  };
-
-  const renderFolderManager = () => (
-    <div className="flex items-center gap-2">
-      {showFolderInput ? (
-        <div className="flex items-center bg-white rounded-xl border border-gray-200 p-1 shadow-sm h-11">
-          <input 
-            type="text" placeholder="新フォルダー名" 
-            value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
-            className="px-3 py-1 outline-none text-sm font-bold w-32 bg-transparent"
-            autoFocus
-            onKeyDown={e => e.key === 'Enter' && addFolder(newFolderName)}
-          />
-          <button onClick={() => addFolder(newFolderName)} className="bg-indigo-600 text-white p-1.5 rounded-lg hover:bg-indigo-700 transition-colors">
-            <CheckCircle size={16}/>
-          </button>
-          <button onClick={() => setShowFolderInput(false)} className="text-gray-400 p-1.5 hover:text-gray-600 transition-colors">
-            <XCircle size={16}/>
-          </button>
-        </div>
-      ) : (
-        <button onClick={() => setShowFolderInput(true)} className="flex items-center text-sm font-bold text-indigo-600 bg-indigo-50 px-3 h-11 rounded-xl hover:bg-indigo-100 transition-colors border border-indigo-100">
-          <FolderPlus size={16} className="mr-1.5"/> フォルダー追加
-        </button>
-      )}
-    </div>
-  );
 
   const handleAddMaterial = async (e) => {
     e.preventDefault();
-    if (!newMatTitle || !user) return;
+    if (!newMatTitle) return;
     playSound('click');
     setIsAddingMaterial(true);
     try {
@@ -598,20 +441,36 @@ export default function App() {
 構成は【結論】【図解・全体像】【詳細解説】【重要キーワード】【確認事項】の順とし、簡潔で客観的な文体（だ・である調）で記述すること。
 ※厳守：無駄な空行やスペースを入れないこと。段落間の空行は最大1行。HTMLの<br>や<p>タグは使用せず、通常の改行のみで構成すること。`;
       
-      const customFormat = userProfile.notePreference ? `\n【ユーザー指定フォーマット（優先適用）】\n${userProfile.notePreference}` : '';
+      const customFormat = userProfile.notePreference 
+        ? `\n【ユーザー指定フォーマット（優先適用）】\n${userProfile.notePreference}` 
+        : '';
 
-      const prompt = `対象: ${userProfile.grade}\n科目: ${newMatSubject}\n以下のテーマについて、学習用ノートを作成してください。\n\n【テーマ】\n${newMatTitle}\n${newMatContent ? `\n【参考テキスト】\n${newMatContent}\n` : ''}\n\n【著作権に関する厳守事項（表現の脱色）】\n入力された参考テキストから『事実ベースの知識』と『論理構造』のみを抽出し、入力元の文章表現や言い回しは一切使用しないでください。AI自身の完全に独自の言葉・表現でゼロから解説を構築すること。\n\n【フォーマット規定】\n${baseFormat}\n${customFormat}\n\n上記規定に従い出力してください。Markdownは使用せず、指定のHTMLタグのみで装飾してください。`;
+      const prompt = `対象: ${userProfile.grade}\n科目: ${newMatSubject}
+以下のテーマについて、学習用ノートを作成してください。
+
+【テーマ】
+${newMatTitle}
+${newMatContent ? `\n【参考テキスト】\n${newMatContent}\n` : ''}
+
+【フォーマット規定】
+${baseFormat}
+${customFormat}
+
+上記規定に従い出力してください。Markdownは使用せず、指定のHTMLタグのみで装飾してください。`;
       
       const summary = await generateGeminiContent(prompt, false);
-      const newMatData = { 
-        title: newMatTitle, subject: newMatSubject, folder: newMatFolder,
-        content: newMatContent || '（参考テキストなし）', summary, 
-        date: new Date().toISOString().split('T')[0], createdAt: Date.now()
+      const newMaterial = { 
+        id: Date.now(), 
+        title: newMatTitle, 
+        subject: newMatSubject,
+        content: newMatContent || '（参考テキストなし）', 
+        summary, 
+        date: new Date().toISOString().split('T')[0] 
       };
-      
-      const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'materials'), newMatData);
-      setActiveMaterialId(docRef.id);
-      setNewMatTitle(''); setNewMatContent('');
+      setMaterials([newMaterial, ...materials]);
+      setActiveMaterialId(newMaterial.id);
+      setNewMatTitle('');
+      setNewMatContent('');
       playSound('correct'); 
       setNoteViewState('view');
       showToast('ノートを生成しました。', 'success');
@@ -620,36 +479,9 @@ export default function App() {
       const dayIndex = today === 0 ? 6 : today - 1;
       const newLog = [...activityLog];
       newLog[dayIndex].count += 1;
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), { activityLog: newLog });
-    } catch (error) { 
-      console.error(error);
-      const isAuthError = error.message.includes('401') || error.message.includes('403');
-      showToast(isAuthError ? "認証エラーが発生しました。設定からAPIキーを確認してください。" : `エラーが発生しました: ${error.message.substring(0, 40)}...`); 
-    } 
+      setActivityLog(newLog);
+    } catch (error) { showToast("AIノートの生成中にエラーが発生しました。"); } 
     finally { setIsAddingMaterial(false); }
-  };
-
-  const saveNoteEdit = async () => {
-    playSound('click');
-    if (!user || !editNoteData) return;
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'materials', editNoteData.id), {
-        title: editNoteData.title, subject: editNoteData.subject, folder: editNoteData.folder, summary: editNoteData.summary
-      });
-      setIsEditingNote(false);
-      showToast('ノートを更新しました', 'success');
-    } catch(e) { console.error(e); showToast("更新に失敗しました"); }
-  };
-
-  const deleteNote = async (id) => {
-    playSound('click');
-    if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'materials', id));
-      setNoteViewState('list');
-      setNoteToDelete(null);
-      showToast('ノートを削除しました', 'success');
-    } catch(e) { console.error(e); showToast("削除に失敗しました"); }
   };
 
   // AIによる単語カード抽出機能
@@ -658,39 +490,40 @@ export default function App() {
     setIsGeneratingCards(true);
     try {
       const prompt = `以下の学習ノートの内容から、特に重要なキーワードとその意味を抽出し、JSON形式の配列で出力してください。（3〜7個程度）
-必ず以下のJSONフォーマットのみを出力し、それ以外の説明文などは一切含めないでください。抽出するキーワードは5個程度に厳選し、説明文も短くしてください。
+必ず以下のJSONフォーマットのみを出力し、それ以外の説明文などは一切含めないでください。
 [{"front": "キーワード", "back": "意味・説明"}]
 
 【ノート内容】
 ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
 `;
-      const rawText = await generateGeminiContent(prompt, false, 'flashcards');
+      const rawText = await generateGeminiContent(prompt, false);
       let newCards = [];
       try {
-        let cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-        const jsonMatch = cleanText.match(/\[[\s\S]*\]/) || cleanText.match(/\{[\s\S]*\}/);
+        const jsonMatch = rawText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            newCards = Array.isArray(parsed) ? parsed : (parsed.items || []);
-        } else { throw new Error("JSONが見つかりません"); }
-      } catch (parseError) { throw new Error("データの解析に失敗しました。"); }
+            newCards = JSON.parse(jsonMatch[0]);
+        } else {
+            throw new Error("JSONが見つかりません");
+        }
+      } catch (parseError) {
+          console.error("JSON Parse Error:", parseError, "Raw Text:", rawText);
+          throw new Error("データの解析に失敗しました。");
+      }
       
-      const batch = writeBatch(db);
-      const fcRef = collection(db, 'artifacts', appId, 'users', user.uid, 'flashcards');
-      let count = 0;
-      newCards.forEach(c => {
-        batch.set(doc(fcRef), {
-          subject: activeMaterial.subject, theme: activeMaterial.title, folder: activeMaterial.folder || '未分類',
-          front: typeof c.front === 'string' ? c.front : JSON.stringify(c.front),
-          back: typeof c.back === 'string' ? c.back : JSON.stringify(c.back),
-          isMemorized: false, createdAt: Date.now() + count++
-        });
-      });
-      await batch.commit();
-      showToast(`${newCards.length}枚の単語カードを抽出・追加しました！`, 'success');
+      const cardsToAdd = newCards.map(c => ({
+        id: Date.now() + Math.random(),
+        subject: activeMaterial.subject,
+        theme: activeMaterial.title, // ノートのタイトルをテーマとして記録
+        front: c.front,
+        back: c.back,
+        isMemorized: false
+      }));
+      
+      setFlashcards(prev => [...cardsToAdd, ...prev]);
+      showToast(`${cardsToAdd.length}枚の単語カードを抽出・追加しました！`, 'success');
     } catch(e) {
       console.error(e);
-      showToast(e.message);
+      showToast('単語カードの抽出に失敗しました。');
     } finally {
       setIsGeneratingCards(false);
     }
@@ -699,44 +532,44 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
   // AIによる単語カード直接生成機能
   const handleGenerateFlashcards = async (e) => {
     e.preventDefault();
-    if (!flashcardPrompt.trim() || !user) return;
+    if (!flashcardPrompt.trim()) return;
     playSound('click');
     setIsGeneratingCardsDirectly(true);
     try {
-      const prompt = `対象: ${userProfile.grade}\n科目: ${flashcardGenSubject}\nテーマ: ${flashcardPrompt}\nこのテーマに関する重要なキーワードとその意味を、学習用の単語帳として抽出してください。抽出するキーワードは5個程度に厳選し、説明文も短くしてください。
+      const prompt = `対象: ${userProfile.grade}\n科目: ${flashcardGenSubject}\nテーマ: ${flashcardPrompt}\nこのテーマに関する重要なキーワードとその意味を、学習用の単語帳として抽出してください。（5〜10個程度）
 必ず以下のJSONフォーマットのみを出力し、それ以外の説明文などは一切含めないでください。
 [{"front": "キーワード", "back": "意味・説明"}]`;
       
-      const rawText = await generateGeminiContent(prompt, false, 'flashcards');
+      const rawText = await generateGeminiContent(prompt, false);
       let newCards = [];
       try {
-        let cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-        const jsonMatch = cleanText.match(/\[[\s\S]*\]/) || cleanText.match(/\{[\s\S]*\}/);
+        const jsonMatch = rawText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            newCards = Array.isArray(parsed) ? parsed : (parsed.items || []);
-        } else { throw new Error("JSONが見つかりません"); }
-      } catch (parseError) { throw new Error("データの解析に失敗しました。"); }
+            newCards = JSON.parse(jsonMatch[0]);
+        } else {
+            throw new Error("JSONが見つかりません");
+        }
+      } catch (parseError) {
+          console.error("JSON Parse Error:", parseError, "Raw Text:", rawText);
+          throw new Error("データの解析に失敗しました。");
+      }
       
-      const batch = writeBatch(db);
-      const fcRef = collection(db, 'artifacts', appId, 'users', user.uid, 'flashcards');
-      let count = 0;
-      newCards.forEach(c => {
-        batch.set(doc(fcRef), {
-          subject: flashcardGenSubject, theme: flashcardPrompt, folder: flashcardGenFolder,
-          front: typeof c.front === 'string' ? c.front : JSON.stringify(c.front),
-          back: typeof c.back === 'string' ? c.back : JSON.stringify(c.back),
-          isMemorized: false, createdAt: Date.now() + count++
-        });
-      });
-      await batch.commit();
+      const cardsToAdd = newCards.map(c => ({
+        id: Date.now() + Math.random(),
+        subject: flashcardGenSubject,
+        theme: flashcardPrompt, // 入力したテーマを記録
+        front: c.front,
+        back: c.back,
+        isMemorized: false
+      }));
       
-      showToast(`${newCards.length}枚の単語カードを追加しました！`, 'success');
+      setFlashcards(prev => [...cardsToAdd, ...prev]);
+      showToast(`${cardsToAdd.length}枚の単語カードを追加しました！`, 'success');
       setFlashcardPrompt('');
       setShowFlashcardGenerator(false);
     } catch(e) {
       console.error(e);
-      showToast(e.message);
+      showToast('単語カードの生成に失敗しました。');
     } finally {
       setIsGeneratingCardsDirectly(false);
     }
@@ -748,7 +581,10 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
     setQuizState('start');
     try {
       let prompt = `対象: ${userProfile.grade}\n実力測定用の4択問題を作成してください。\n`;
-      let countInstruction = customSettings.count === 'おまかせ' ? `指定範囲の広さや内容の濃さに応じて、適切な問題数（目安：10〜20問）を自動的に判断して出力してください。` : `出題数: ${customSettings.count}問`;
+      
+      let countInstruction = customSettings.count === 'おまかせ' 
+        ? `指定範囲の広さや内容の濃さに応じて、適切な問題数（目安：10〜20問）を自動的に判断して出力してください。` 
+        : `出題数: ${customSettings.count}問`;
 
       let quizSub = 'その他';
       if (studyMode === 'custom') {
@@ -762,7 +598,7 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
         const recentMistakes = targetMistakes.map(m => m.question).join('\n・');
         prompt += `【条件】ユーザーが過去に間違えた以下の問題の「類似問題（数値や条件を変えたもの）」を作成し、再度出題してください。\n・${recentMistakes}\n${countInstruction}`;
         quizSub = 'リベンジ特訓';
-        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), { hasDoneRevenge: true });
+        setHasDoneRevenge(true); // ロードマップの進捗フラグ
       } else {
         const mat = materials.find(m => m.id === activeMaterialId);
         prompt += `【条件】テーマ: ${mat.title}\n内容: ${mat.summary}\n${countInstruction}`;
@@ -770,7 +606,11 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
       }
       setCurrentQuizSubject(quizSub);
 
-      prompt += `\n【要件】\n1. 思考力を問う実践的な問題を含めること。\n2. 解説は客観的かつ論理的な文体（だ・である調）とし、簡潔に必要な情報のみを記述すること。\n3. weaknessTagは20文字以内の具体的な単元名とすること。\n4. 各選択肢(options)には、その選択肢を選んだ際のエラー要因(errorCategory)を付与すること。正解は'correct'、不正解は 'concept'(概念理解の欠如), 'prerequisite'(前提知識の抜け漏れ), 'careless'(計算・処理ミス), 'reading'(読解・条件見落とし) のいずれかに分類すること。\n${AI_STRICT_RULES}`;
+      prompt += `\n【要件】
+1. 思考力を問う実践的な問題を含めること。
+2. 解説は客観的かつ論理的な文体（だ・である調）とし、簡潔に必要な情報のみを記述すること。
+3. weaknessTagは20文字以内の具体的な単元名とすること。
+${AI_STRICT_RULES}`;
       
       const generatedQuiz = await generateGeminiContent(prompt, true, 'quiz');
       const finalData = customSettings.count === 'おまかせ' ? generatedQuiz : generatedQuiz.slice(0, customSettings.count);
@@ -778,10 +618,7 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
       setCurrentAnswers({});
       setQuizState('playing');
       playSound('start');
-    } catch (error) { 
-      console.error(error);
-      showToast(error.message); 
-    } 
+    } catch (error) { showToast("問題の生成に失敗しました。"); } 
     finally { setIsGeneratingQuiz(false); }
   };
 
@@ -790,61 +627,35 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
     setCurrentAnswers({...currentAnswers, [qId]: opt});
   };
 
-  const submitQuiz = async () => {
+  const submitQuiz = () => {
     setQuizState('results');
-    if (!user) return;
-    
     const newWeaknesses = new Set(weaknesses);
     const newMistakes = [];
-    const newErrorStats = { ...errorStats };
     let correctCount = 0;
 
     quizData.forEach(q => {
-      const selectedOptText = currentAnswers[q.id];
-      const selectedOptObj = q.options?.find(o => o.text === selectedOptText) || { errorCategory: 'unknown' };
-
-      if (selectedOptText === q.answer) { 
+      if (currentAnswers[q.id] === q.answer) { 
         correctCount++; 
         newWeaknesses.delete(q.weaknessTag); 
-      } else if(selectedOptText) { 
+      } else if(currentAnswers[q.id]) { 
         newWeaknesses.add(q.weaknessTag); 
-        newMistakes.push({ ...q, subject: currentQuizSubject, errorCategory: selectedOptObj.errorCategory });
-        if (selectedOptObj.errorCategory && selectedOptObj.errorCategory !== 'correct') {
-          newErrorStats[selectedOptObj.errorCategory] = (newErrorStats[selectedOptObj.errorCategory] || 0) + 1;
-        }
+        newMistakes.push({ ...q, subject: currentQuizSubject });
       }
     });
 
-    const updatedStats = { totalQuestions: stats.totalQuestions + quizData.length, correctAnswers: stats.correctAnswers + correctCount };
-    const updatedSubStats = { ...subjectStats };
-    if (!updatedSubStats[currentQuizSubject]) updatedSubStats[currentQuizSubject] = { total: 0, correct: 0 };
-    updatedSubStats[currentQuizSubject].total += quizData.length;
-    updatedSubStats[currentQuizSubject].correct += correctCount;
-    
-    const today = new Date().getDay();
-    const dayIndex = today === 0 ? 6 : today - 1;
-    const newLog = [...activityLog];
-    newLog[dayIndex].count += quizData.length;
+    setWeaknesses(Array.from(newWeaknesses));
+    if (newMistakes.length > 0) {
+      setMistakes(prev => [...newMistakes, ...prev].slice(0, 50)); // 最大50問までストック
+    }
 
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), {
-        weaknesses: Array.from(newWeaknesses),
-        stats: updatedStats,
-        errorStats: newErrorStats,
-        subjectStats: updatedSubStats,
-        activityLog: newLog
-      });
-
-      if (newMistakes.length > 0) {
-        const batch = writeBatch(db);
-        const mistakesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'mistakes');
-        let count = 0;
-        newMistakes.forEach(m => {
-          batch.set(doc(mistakesRef), { ...m, createdAt: Date.now() + count++ });
-        });
-        await batch.commit();
-      }
-    } catch(e) { console.error(e); showToast("結果の保存に失敗しました"); }
+    setStats({ totalQuestions: stats.totalQuestions + quizData.length, correctAnswers: stats.correctAnswers + correctCount });
+    setSubjectStats(prev => {
+      const newStats = { ...prev };
+      if (!newStats[currentQuizSubject]) newStats[currentQuizSubject] = { total: 0, correct: 0 };
+      newStats[currentQuizSubject].total += quizData.length;
+      newStats[currentQuizSubject].correct += correctCount;
+      return newStats;
+    });
 
     const scoreRate = quizData.length > 0 ? correctCount / quizData.length : 0;
     if (scoreRate >= 0.8) {
@@ -854,6 +665,12 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
     } else {
       setTimeout(() => playSound('correct'), 300);
     }
+
+    const today = new Date().getDay();
+    const dayIndex = today === 0 ? 6 : today - 1;
+    const newLog = [...activityLog];
+    newLog[dayIndex].count += quizData.length;
+    setActivityLog(newLog);
   };
 
   const formatTime = (seconds) => {
@@ -880,7 +697,6 @@ ${activeMaterial.summary.replace(/<[^>]*>?/gm, '')}
 3. 総合的な範囲から出題すること。
 4. 解説は客観的で論理的な文体（だ・である調）にすること。
 5. weaknessTagは単元名とすること。
-6. 各選択肢(options)には、その選択肢を選んだ際のエラー要因(errorCategory)を付与すること。正解は'correct'、不正解は 'concept'(概念理解の欠如), 'prerequisite'(前提知識の抜け漏れ), 'careless'(計算・処理ミス), 'reading'(読解・条件見落とし) のいずれかに分類すること。
 ${AI_STRICT_RULES}`;
       
       const generatedExam = await generateGeminiContent(prompt, true, 'exam');
@@ -888,7 +704,7 @@ ${AI_STRICT_RULES}`;
       let flatExamData = [];
       let globalQuestionIndex = 0;
       generatedExam.forEach((group, gIdx) => {
-        group.questions?.forEach((q, qIdx) => {
+        group.questions.forEach((q, qIdx) => {
           globalQuestionIndex++;
           flatExamData.push({
             ...q,
@@ -910,72 +726,45 @@ ${AI_STRICT_RULES}`;
       setExamCurrentIndex(0);
       setExamTimeRemaining(flatExamData.length * 60);
       setExamState('playing');
-      
-      if(user) await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), { hasDoneExam: true });
+      setHasDoneExam(true); // ロードマップの進捗フラグ
       playSound('start');
     } catch (error) { 
       console.error(error);
-      showToast(error.message); 
+      showToast("模試の生成に失敗しました。問題数を減らして再試行してください。"); 
     } 
     finally { setIsGeneratingQuiz(false); }
   };
 
-  const submitExam = async (isTimeUp = false) => {
+  const submitExam = (isTimeUp = false) => {
     if (isTimeUp) showToast("時間切れです。自動提出されました。", "warning");
     setExamState('results');
-    if(!user) return;
-
     const newWeaknesses = new Set(weaknesses);
     const newMistakes = [];
-    const newErrorStats = { ...errorStats };
     let correctCount = 0;
     
     examData.forEach(q => {
-      const selectedOptText = examAnswers[q.id];
-      const selectedOptObj = q.options?.find(o => o.text === selectedOptText) || { errorCategory: 'unknown' };
-
-      if (selectedOptText === q.answer) { 
+      if (examAnswers[q.id] === q.answer) { 
         correctCount++; 
         newWeaknesses.delete(q.weaknessTag); 
-      } else if (selectedOptText) { 
+      } else if (examAnswers[q.id]) { 
         newWeaknesses.add(q.weaknessTag); 
-        newMistakes.push({ ...q, subject: examSettings.subject, errorCategory: selectedOptObj.errorCategory });
-        if (selectedOptObj.errorCategory && selectedOptObj.errorCategory !== 'correct') {
-          newErrorStats[selectedOptObj.errorCategory] = (newErrorStats[selectedOptObj.errorCategory] || 0) + 1;
-        }
+        newMistakes.push({ ...q, subject: examSettings.subject });
       }
     });
     
-    const updatedStats = { totalQuestions: stats.totalQuestions + examData.length, correctAnswers: stats.correctAnswers + correctCount };
-    const updatedSubStats = { ...subjectStats };
-    if (!updatedSubStats[examSettings.subject]) updatedSubStats[examSettings.subject] = { total: 0, correct: 0 };
-    updatedSubStats[examSettings.subject].total += examData.length;
-    updatedSubStats[examSettings.subject].correct += correctCount;
+    setWeaknesses(Array.from(newWeaknesses));
+    if (newMistakes.length > 0) {
+      setMistakes(prev => [...newMistakes, ...prev].slice(0, 50));
+    }
 
-    const today = new Date().getDay();
-    const dayIndex = today === 0 ? 6 : today - 1;
-    const newLog = [...activityLog];
-    newLog[dayIndex].count += examData.length;
-
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data'), {
-        weaknesses: Array.from(newWeaknesses),
-        stats: updatedStats,
-        errorStats: newErrorStats,
-        subjectStats: updatedSubStats,
-        activityLog: newLog
-      });
-
-      if (newMistakes.length > 0) {
-        const batch = writeBatch(db);
-        const mistakesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'mistakes');
-        let count = 0;
-        newMistakes.forEach(m => {
-          batch.set(doc(mistakesRef), { ...m, createdAt: Date.now() + count++ });
-        });
-        await batch.commit();
-      }
-    } catch(e) { console.error(e); showToast("結果の保存に失敗しました"); }
+    setStats({ totalQuestions: stats.totalQuestions + examData.length, correctAnswers: stats.correctAnswers + correctCount });
+    setSubjectStats(prev => {
+      const newStats = { ...prev };
+      if (!newStats[examSettings.subject]) newStats[examSettings.subject] = { total: 0, correct: 0 };
+      newStats[examSettings.subject].total += examData.length;
+      newStats[examSettings.subject].correct += correctCount;
+      return newStats;
+    });
 
     const scoreRate = examData.length > 0 ? correctCount / examData.length : 0;
     if (scoreRate >= 0.8) {
@@ -985,6 +774,12 @@ ${AI_STRICT_RULES}`;
     } else {
       setTimeout(() => playSound('correct'), 300);
     }
+
+    const today = new Date().getDay();
+    const dayIndex = today === 0 ? 6 : today - 1;
+    const newLog = [...activityLog];
+    newLog[dayIndex].count += examData.length;
+    setActivityLog(newLog);
   };
 
   const sendChatMessage = async (e) => {
@@ -1003,58 +798,23 @@ ${AI_STRICT_RULES}`;
       setChatMessages([...newHistory, { role: 'ai', text: reply }]);
       playSound('correct'); 
     } catch (error) {
-      console.error(error);
-      setChatMessages([...newHistory, { role: 'ai', text: error.message }]);
+      setChatMessages([...newHistory, { role: 'ai', text: '通信エラーが発生しました。再試行してください。' }]);
     } finally { setIsChatting(false); }
   };
 
   // 単語カードの「覚えた」処理
-  const handleMemorizedCard = async (e, cardId) => {
+  const handleMemorizedCard = (e) => {
     e.stopPropagation();
-    if(!user) return;
+    if (pendingFlashcards.length === 0) return;
     playSound('correct');
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', cardId), { isMemorized: true });
-      setIsCardFlipped(false);
-    } catch(err) { console.error(err); showToast("更新に失敗しました"); }
-  };
-
-  const deleteFlashcard = async (id) => {
-    playSound('click');
-    if(!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', id));
-      showToast('カードを削除しました', 'success');
-    } catch(err) { console.error(err); showToast("削除に失敗しました"); }
-  };
-
-  const saveFlashcardEdit = async () => {
-    playSound('click');
-    if(!user || !editCardData) return;
-    try {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', editCardData.id), {
-        front: editCardData.front, back: editCardData.back, subject: editCardData.subject, folder: editCardData.folder
-      });
-      setIsEditingCardId(null);
-      showToast('カードを保存しました', 'success');
-    } catch(err) { console.error(err); showToast("保存に失敗しました"); }
+    const cardId = pendingFlashcards[currentCardIndex].id;
+    setFlashcards(flashcards.map(c => c.id === cardId ? { ...c, isMemorized: true } : c));
+    setIsCardFlipped(false);
   };
 
   // ==========================================
   // UI レンダリング関数
   // ==========================================
-
-  if (authLoading || isSetupComplete === null) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 via-indigo-100 to-purple-100">
-        <div className="bg-white p-4 rounded-full shadow-lg text-indigo-600 mb-6 animate-bounce">
-          <Cloud size={48} />
-        </div>
-        <h2 className="text-2xl font-black text-indigo-900 mb-2">アカウント情報を同期中...</h2>
-        <p className="text-indigo-700 font-bold flex items-center"><Loader2 className="w-4 h-4 mr-2 animate-spin"/> クラウドからデータを読み込んでいます</p>
-      </div>
-    );
-  }
 
   const renderDashboard = () => {
     const roadmapSteps = getRoadmapSteps();
@@ -1217,7 +977,7 @@ ${AI_STRICT_RULES}`;
         </div>
       </div>
     </div>
-    );
+  );
   };
 
   const renderMaterials = () => {
@@ -1239,7 +999,7 @@ ${AI_STRICT_RULES}`;
           <div className="bg-white p-6 md:p-10 rounded-3xl shadow-lg border border-gray-100">
             <form onSubmit={handleAddMaterial} className="space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-3">
+                <div className="md:col-span-2">
                   <label className="block text-base font-bold text-gray-700 mb-3">
                     テーマ・単元 <span className="text-red-500">*</span>
                   </label>
@@ -1249,7 +1009,7 @@ ${AI_STRICT_RULES}`;
                     className="w-full border-2 border-gray-200 rounded-2xl px-5 py-4 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-500 transition-colors font-bold text-lg"
                   />
                 </div>
-                <div className="md:col-span-1">
+                <div>
                   <label className="block text-base font-bold text-gray-700 mb-3">
                     科目 <span className="text-red-500">*</span>
                   </label>
@@ -1258,17 +1018,6 @@ ${AI_STRICT_RULES}`;
                     className="w-full border-2 border-gray-200 rounded-2xl px-5 py-4 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-500 transition-colors font-bold text-lg"
                   >
                     {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-base font-bold text-gray-700 mb-3">
-                    保存先フォルダー
-                  </label>
-                  <select 
-                    value={newMatFolder} onChange={(e) => setNewMatFolder(e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-2xl px-5 py-4 bg-gray-50 focus:bg-white focus:outline-none focus:border-blue-500 transition-colors font-bold text-lg"
-                  >
-                    {folders.map(f => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </div>
               </div>
@@ -1313,96 +1062,42 @@ ${AI_STRICT_RULES}`;
     }
 
     if (noteViewState === 'view' && activeMaterial) {
-      if (isEditingNote) {
-        return (
-          <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12">
-            <div className="flex items-center border-b-2 border-blue-500 pb-4 mb-8">
-              <Edit size={28} className="text-blue-600 mr-3"/>
-              <h2 className="text-2xl font-black text-gray-800">ノートを編集</h2>
-            </div>
-            <div className="bg-white p-6 md:p-10 rounded-3xl shadow-xl border border-gray-200 space-y-6">
-              <div>
-                <label className="block text-sm font-bold text-gray-600 mb-2">タイトル</label>
-                <input 
-                  type="text" value={editNoteData.title} 
-                  onChange={e => setEditNoteData({...editNoteData, title: e.target.value})}
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-bold text-gray-600 mb-2">科目</label>
-                  <select 
-                    value={editNoteData.subject} 
-                    onChange={e => setEditNoteData({...editNoteData, subject: e.target.value})}
-                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 font-bold text-base outline-none focus:border-blue-500"
-                  >
-                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-gray-600 mb-2">保存先フォルダー</label>
-                  <select 
-                    value={editNoteData.folder || '未分類'} 
-                    onChange={e => setEditNoteData({...editNoteData, folder: e.target.value})}
-                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 font-bold text-base outline-none focus:border-blue-500"
-                  >
-                    {folders.map(f => <option key={f} value={f}>{f}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-gray-600 mb-2">ノート内容（HTMLタグ使用可）</label>
-                <textarea 
-                  rows={15} value={editNoteData.summary} 
-                  onChange={e => setEditNoteData({...editNoteData, summary: e.target.value})}
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 font-medium text-sm font-mono outline-none focus:border-blue-500 leading-relaxed"
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                <button onClick={() => setIsEditingNote(false)} className="px-6 py-3 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">キャンセル</button>
-                <button onClick={saveNoteEdit} className="px-8 py-3 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-colors flex items-center"><Save size={18} className="mr-2"/> 保存する</button>
-              </div>
-            </div>
-          </div>
-        );
-      }
-
       return (
         <div className="space-y-6 animate-fade-in max-w-5xl mx-auto pb-12">
-          <div className="flex flex-col md:flex-row md:items-center justify-between border-b-2 border-gray-200 pb-4 mb-6 gap-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between border-b-2 border-gray-200 pb-4 mb-8 gap-4">
             <div className="flex items-center">
               <button onClick={() => { playSound('click'); setNoteViewState('list'); }} className="mr-4 p-2 hover:bg-gray-200 rounded-full transition-colors shrink-0">
                 <ChevronLeft className="w-6 h-6 text-gray-600" />
               </button>
-              <div className="flex items-center flex-wrap gap-2">
-                <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border border-blue-100 flex items-center">
-                  {activeMaterial.subject}
+              {/* 科目の表示と編集 */}
+              {isEditingSubject ? (
+                <div className="flex items-center">
+                  <select 
+                    value={activeMaterial.subject} 
+                    onChange={(e) => {
+                      setMaterials(materials.map(m => m.id === activeMaterial.id ? { ...m, subject: e.target.value } : m));
+                      setIsEditingSubject(false);
+                      playSound('click');
+                      showToast('科目を変更しました', 'success');
+                    }}
+                    className="border-2 border-blue-300 rounded-lg px-2 py-1 text-sm font-bold text-blue-800 outline-none"
+                  >
+                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button onClick={() => setIsEditingSubject(false)} className="ml-2 text-gray-500 hover:text-gray-700"><XCircle size={18}/></button>
+                </div>
+              ) : (
+                <span 
+                  onClick={() => setIsEditingSubject(true)} 
+                  className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg border border-blue-100 flex items-center cursor-pointer hover:bg-blue-100 transition-colors"
+                  title="科目を変更"
+                >
+                  {activeMaterial.subject} <Edit3 className="w-3 h-3 ml-1.5 opacity-60" />
                 </span>
-                <span className="text-sm font-bold text-gray-600 bg-gray-100 px-3 py-1 rounded-lg border border-gray-200 flex items-center">
-                  <Folder size={14} className="mr-1.5"/>{activeMaterial.folder || '未分類'}
-                </span>
-              </div>
+              )}
             </div>
             
-            <div className="flex flex-col sm:flex-row gap-2 md:gap-3 w-full md:w-auto">
-              <div className="flex gap-2 flex-1 sm:flex-none mr-2">
-                <button onClick={() => { setEditNoteData(activeMaterial); setIsEditingNote(true); playSound('click'); }} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex-1 sm:flex-none flex justify-center" title="編集">
-                  <Edit size={20}/>
-                </button>
-                {noteToDelete === activeMaterial.id ? (
-                   <div className="flex items-center gap-1 bg-red-50 p-1 rounded-lg text-red-700 font-bold text-xs">
-                     消去?
-                     <button onClick={() => deleteNote(activeMaterial.id)} className="bg-red-600 text-white px-2 py-1 rounded">はい</button>
-                     <button onClick={() => setNoteToDelete(null)} className="bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">❌</button>
-                   </div>
-                ) : (
-                  <button onClick={() => { playSound('click'); setNoteToDelete(activeMaterial.id); }} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-1 sm:flex-none flex justify-center" title="削除">
-                    <Trash2 size={20}/>
-                  </button>
-                )}
-              </div>
-
+            <div className="flex flex-col sm:flex-row gap-2 md:gap-4 w-full md:w-auto">
               <button 
                 onClick={() => { playSound('click'); handleTabChange('study'); setStudyMode('material'); }}
                 className="bg-indigo-600 text-white hover:bg-indigo-700 px-5 py-2.5 rounded-full font-bold flex items-center justify-center transition-all shadow-md text-sm md:text-base flex-1 sm:flex-none"
@@ -1415,7 +1110,7 @@ ${AI_STRICT_RULES}`;
                 className="bg-green-600 disabled:bg-green-400 text-white hover:bg-green-700 px-5 py-2.5 rounded-full font-bold flex items-center justify-center transition-all shadow-md text-sm md:text-base flex-1 sm:flex-none"
               >
                  {isGeneratingCards ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <Layers className="w-4 h-4 mr-2" />} 
-                 単語抽出
+                 単語カード抽出
               </button>
             </div>
           </div>
@@ -1442,11 +1137,10 @@ ${AI_STRICT_RULES}`;
 
     const filteredMaterials = materials.filter(m => 
       (filterSubject === 'すべて' || m.subject === filterSubject) &&
-      (filterNoteFolder === 'すべて' || (m.folder || '未分類') === filterNoteFolder) &&
       (m.title.toLowerCase().includes(searchQuery.toLowerCase()) || m.summary.toLowerCase().includes(searchQuery.toLowerCase()))
     ).sort((a, b) => {
-      if (sortOrder === 'newest') return b.createdAt ? b.createdAt - a.createdAt : b.id - a.id;
-      if (sortOrder === 'oldest') return a.createdAt ? a.createdAt - b.createdAt : a.id - b.id;
+      if (sortOrder === 'newest') return b.id - a.id;
+      if (sortOrder === 'oldest') return a.id - b.id;
       if (sortOrder === 'a-z') return a.title.localeCompare(b.title);
       return 0;
     });
@@ -1469,7 +1163,7 @@ ${AI_STRICT_RULES}`;
           </button>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-4 mb-8">
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-4 mb-8">
           <div className="flex-1 relative">
             <Search className="w-5 h-5 absolute left-4 top-3.5 text-gray-400" />
             <input 
@@ -1478,39 +1172,28 @@ ${AI_STRICT_RULES}`;
               className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-12 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 transition-colors"
             />
           </div>
-          <div className="flex flex-wrap md:flex-nowrap gap-3 items-center w-full">
-            <div className="relative flex-1 min-w-[120px]">
-              <Filter className="w-4 h-4 absolute left-3 top-3.5 text-gray-500" />
+          <div className="flex gap-4">
+            <div className="relative flex-1 md:w-48">
+              <Filter className="w-4 h-4 absolute left-3 top-4 text-gray-500" />
               <select 
                 value={filterSubject} onChange={(e) => { playSound('click'); setFilterSubject(e.target.value); }}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-2.5 pl-9 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 appearance-none cursor-pointer text-sm"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
               >
                 <option value="すべて">全科目</option>
                 {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <div className="relative flex-1 min-w-[120px]">
-              <Folder className="w-4 h-4 absolute left-3 top-3.5 text-gray-500" />
-              <select 
-                value={filterNoteFolder} onChange={(e) => { playSound('click'); setFilterNoteFolder(e.target.value); }}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-2.5 pl-9 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 appearance-none cursor-pointer text-sm"
-              >
-                <option value="すべて">全フォルダー</option>
-                {folders.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
-            </div>
-            <div className="relative flex-1 min-w-[120px]">
-              <SortDesc className="w-4 h-4 absolute left-3 top-3.5 text-gray-500" />
+            <div className="relative flex-1 md:w-48">
+              <SortDesc className="w-4 h-4 absolute left-3 top-4 text-gray-500" />
               <select 
                 value={sortOrder} onChange={(e) => { playSound('click'); setSortOrder(e.target.value); }}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-2.5 pl-9 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 appearance-none cursor-pointer text-sm"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 font-bold text-gray-700 focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
               >
                 <option value="newest">新しい順</option>
                 <option value="oldest">古い順</option>
                 <option value="a-z">名前順</option>
               </select>
             </div>
-            {renderFolderManager()}
           </div>
         </div>
 
@@ -1523,18 +1206,15 @@ ${AI_STRICT_RULES}`;
                 className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 cursor-pointer transform hover:-translate-y-1 hover:shadow-md transition-all group flex flex-col h-64"
               >
                 <div className="flex justify-between items-start mb-4 shrink-0">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs font-black bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-md w-max">
-                      {mat.subject}
-                    </span>
-                    <span className="text-[10px] font-bold text-gray-500 flex items-center"><Folder size={10} className="mr-1"/>{mat.folder || '未分類'}</span>
-                  </div>
+                  <span className="text-xs font-black bg-blue-50 text-blue-700 border border-blue-100 px-3 py-1 rounded-md">
+                    {mat.subject}
+                  </span>
                   <span className="text-xs font-bold text-gray-400">{mat.date}</span>
                 </div>
                 <h3 className="text-xl font-black text-gray-800 mb-3 group-hover:text-blue-600 transition-colors line-clamp-2">
                   {mat.title}
                 </h3>
-                <p className="text-sm font-bold text-gray-500 line-clamp-3 flex-1">
+                <p className="text-sm font-bold text-gray-500 line-clamp-4 flex-1">
                   {mat.summary.replace(/<[^>]*>?/gm, '')}
                 </p>
               </div>
@@ -1765,11 +1445,11 @@ ${AI_STRICT_RULES}`;
               {q.question}
             </p>
             <div className="grid grid-cols-1 gap-4">
-              {q.options.map((optObj, optIdx) => {
-                const isSelected = currentAnswers[q.id] === optObj.text;
+              {q.options.map((opt, optIdx) => {
+                const isSelected = currentAnswers[q.id] === opt;
                 return (
                   <button
-                    key={optIdx} onClick={() => handleAnswerSelect(q.id, optObj.text)}
+                    key={optIdx} onClick={() => handleAnswerSelect(q.id, opt)}
                     className={`w-full p-4 md:p-5 rounded-2xl border-2 text-left transition-all text-base md:text-xl transform ${
                       isSelected 
                         ? 'border-blue-500 bg-blue-50 text-blue-900 font-black shadow-md scale-[1.01] ring-2 ring-blue-200' 
@@ -1780,7 +1460,7 @@ ${AI_STRICT_RULES}`;
                       <span className={`inline-flex shrink-0 items-center justify-center w-8 h-8 rounded-full mr-4 text-sm font-black ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
                         {['A', 'B', 'C', 'D'][optIdx]}
                       </span>
-                      {optObj.text}
+                      {opt}
                     </div>
                   </button>
                 )
@@ -1857,16 +1537,6 @@ ${AI_STRICT_RULES}`;
                         {currentAnswers[q.id] || "無回答"}
                       </span>
                     </div>
-                    {!isCorrect && currentAnswers[q.id] && (
-                      <div className="mt-2 text-xs font-bold text-orange-600 bg-orange-50 inline-block px-2 py-1 rounded">
-                        分析: {
-                          q.options.find(o => o.text === currentAnswers[q.id])?.errorCategory === 'concept' ? '概念理解の欠如' :
-                          q.options.find(o => o.text === currentAnswers[q.id])?.errorCategory === 'prerequisite' ? '前提知識の抜け漏れ' :
-                          q.options.find(o => o.text === currentAnswers[q.id])?.errorCategory === 'careless' ? '処理・計算ミス' :
-                          q.options.find(o => o.text === currentAnswers[q.id])?.errorCategory === 'reading' ? '読解力・条件見落とし' : '不明なエラー'
-                        }
-                      </div>
-                    )}
                     {!isCorrect && (
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center pt-3 border-t border-gray-200 mt-3 gap-2">
                          <span className="text-sm font-bold text-gray-500">正解:</span>
@@ -2086,16 +1756,16 @@ ${AI_STRICT_RULES}`;
               </p>
 
               <div className="space-y-3 md:space-y-4">
-                {currentQ.options.map((optObj, idx) => (
+                {currentQ.options.map((opt, idx) => (
                   <button
-                    key={idx} onClick={() => { playSound('click'); setExamAnswers({...examAnswers, [currentQ.id]: optObj.text}); }}
+                    key={idx} onClick={() => { playSound('click'); setExamAnswers({...examAnswers, [currentQ.id]: opt}); }}
                     className={`w-full p-4 md:p-6 rounded-2xl border-2 text-left transition-all text-base md:text-xl font-bold transform ${
-                      examAnswers[currentQ.id] === optObj.text 
+                      examAnswers[currentQ.id] === opt 
                         ? 'border-indigo-600 bg-indigo-50 text-indigo-900 shadow-md ring-4 ring-indigo-100 scale-[1.01]' 
                         : 'border-gray-200 hover:border-indigo-300 hover:bg-white bg-white text-gray-700 hover:scale-[1.01]'
                     }`}
                   >
-                    <span className="inline-block w-8 md:w-10 font-black text-gray-400 mr-2 md:mr-3">{idx + 1}.</span> {optObj.text}
+                    <span className="inline-block w-8 md:w-10 font-black text-gray-400 mr-2 md:mr-3">{idx + 1}.</span> {opt}
                   </button>
                 ))}
               </div>
@@ -2244,16 +1914,6 @@ ${AI_STRICT_RULES}`;
                       <p className={`p-3 md:p-4 rounded-xl border-2 font-black text-sm md:text-lg ${isCorrect ? 'border-green-300 bg-green-100 text-green-800' : 'border-red-300 bg-red-100 text-red-800 line-through decoration-2'}`}>
                         {examAnswers[q.id] || '無回答'}
                       </p>
-                      {!isCorrect && examAnswers[q.id] && (
-                        <div className="mt-3 text-xs font-bold text-orange-600 bg-orange-50 inline-block px-3 py-1.5 rounded-lg border border-orange-100">
-                          エラー分析: {
-                            q.options.find(o => o.text === examAnswers[q.id])?.errorCategory === 'concept' ? '概念理解の欠如' :
-                            q.options.find(o => o.text === examAnswers[q.id])?.errorCategory === 'prerequisite' ? '前提知識の抜け漏れ' :
-                            q.options.find(o => o.text === examAnswers[q.id])?.errorCategory === 'careless' ? '処理・計算ミス' :
-                            q.options.find(o => o.text === examAnswers[q.id])?.errorCategory === 'reading' ? '読解力・条件見落とし' : '不明'
-                          }
-                        </div>
-                      )}
                     </div>
                     <div className="bg-indigo-50 p-4 md:p-5 rounded-2xl border border-indigo-100">
                       <p className="text-xs md:text-sm text-indigo-500 font-bold mb-2 md:mb-3 flex items-center"><CheckCircle className="w-3 h-3 md:w-4 md:h-4 mr-1"/> 正解</p>
@@ -2285,13 +1945,8 @@ ${AI_STRICT_RULES}`;
     );
   };
 
-  const renderFlashcards = () => {
-    const currentCard = pendingFlashcards.length > 0 && currentCardIndex < pendingFlashcards.length 
-      ? pendingFlashcards[currentCardIndex] 
-      : null;
-
-    return (
-    <div className="space-y-6 animate-fade-in max-w-5xl mx-auto h-full flex flex-col pb-12">
+  const renderFlashcards = () => (
+    <div className="space-y-6 animate-fade-in max-w-4xl mx-auto h-full flex flex-col">
       <div className="flex flex-col md:flex-row md:items-end justify-between border-b-2 border-gray-200 pb-4 shrink-0 gap-4">
         <div className="flex items-center">
           <Layers className="w-8 h-8 mr-3 text-indigo-600" />
@@ -2300,242 +1955,138 @@ ${AI_STRICT_RULES}`;
             <p className="text-sm font-bold text-gray-500">AIノートやテーマから抽出したキーワードの反復学習</p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2 w-full md:w-auto">
-          <div className="flex bg-gray-200 p-1 rounded-xl w-max self-start md:self-end">
-            <button onClick={() => setFlashcardTab('study')} className={`px-4 py-2 rounded-lg font-bold text-sm transition-all flex items-center ${flashcardTab === 'study' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
-              <Brain size={16} className="mr-1.5"/> 学習する
-            </button>
-            <button onClick={() => setFlashcardTab('list')} className={`px-4 py-2 rounded-lg font-bold text-sm transition-all flex items-center ${flashcardTab === 'list' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
-              <ListIcon size={16} className="mr-1.5"/> 一覧・管理
-            </button>
-          </div>
+        <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto mt-3 md:mt-0">
+          <button 
+            onClick={() => { playSound('click'); setShowFlashcardGenerator(!showFlashcardGenerator); }}
+            className={`px-4 py-2 rounded-xl font-bold text-sm transition-colors flex items-center justify-center flex-1 md:flex-none ${showFlashcardGenerator ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'}`}
+          >
+            <Zap className="w-4 h-4 mr-1.5" /> AIで作成
+          </button>
+          <select 
+            value={flashcardSubject} 
+            onChange={(e) => { setFlashcardSubject(e.target.value); setFlashcardTheme('すべて'); playSound('click'); }}
+            className="border-2 border-gray-200 rounded-xl px-4 py-2 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-1 md:flex-none min-w-[100px]"
+          >
+            <option value="すべて">全科目</option>
+            {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select 
+            value={flashcardTheme} 
+            onChange={(e) => { setFlashcardTheme(e.target.value); playSound('click'); }}
+            className="border-2 border-gray-200 rounded-xl px-4 py-2 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-[2] md:flex-none md:max-w-xs"
+          >
+            <option value="すべて">全テーマ</option>
+            {availableThemes.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
       </div>
-
-      {flashcardTab === 'list' ? (
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col h-full animate-fade-in">
-          <div className="flex flex-wrap md:flex-nowrap gap-3 items-center w-full mb-6 border-b border-gray-100 pb-4">
-            <button 
-              onClick={() => { playSound('click'); setShowFlashcardGenerator(!showFlashcardGenerator); }}
-              className={`px-4 py-2 rounded-xl font-bold text-sm transition-colors flex items-center justify-center flex-1 md:flex-none h-11 ${showFlashcardGenerator ? 'bg-indigo-100 text-indigo-700' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'}`}
-            >
-              <Zap className="w-4 h-4 mr-1.5" /> AIで作成
-            </button>
-            <select 
-              value={flashcardSubject} 
-              onChange={(e) => { setFlashcardSubject(e.target.value); setFlashcardTheme('すべて'); playSound('click'); }}
-              className="border-2 border-gray-200 rounded-xl px-4 py-2.5 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-1 md:flex-none text-sm h-11"
-            >
-              <option value="すべて">全科目</option>
-              {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select 
-              value={filterCardFolder} 
-              onChange={(e) => { setFilterCardFolder(e.target.value); playSound('click'); }}
-              className="border-2 border-gray-200 rounded-xl px-4 py-2.5 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-1 md:flex-none text-sm h-11"
-            >
-              <option value="すべて">全フォルダー</option>
-              {folders.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-            {renderFolderManager()}
-          </div>
-
-          {showFlashcardGenerator && (
-            <form onSubmit={handleGenerateFlashcards} className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100 flex flex-col md:flex-row gap-4 mb-6 animate-fade-in shadow-inner shrink-0">
-               <div className="flex flex-col flex-1">
-                 <label className="text-xs font-bold text-indigo-800 mb-1">科目</label>
-                 <select value={flashcardGenSubject} onChange={e => setFlashcardGenSubject(e.target.value)} className="p-3 rounded-xl border-2 border-indigo-200 focus:border-indigo-500 outline-none font-bold text-gray-700 bg-white">
-                   {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                 </select>
-               </div>
-               <div className="flex flex-col flex-[1.5]">
-                 <label className="text-xs font-bold text-indigo-800 mb-1">テーマ・単元を入力</label>
-                 <input type="text" placeholder="例: 平安時代の文化" value={flashcardPrompt} onChange={e => setFlashcardPrompt(e.target.value)} className="p-3 rounded-xl border-2 border-indigo-200 focus:border-indigo-500 outline-none font-bold text-gray-800" />
-               </div>
-               <div className="flex flex-col flex-1">
-                 <label className="text-xs font-bold text-indigo-800 mb-1">保存先フォルダー</label>
-                 <select value={flashcardGenFolder} onChange={e => setFlashcardGenFolder(e.target.value)} className="p-3 rounded-xl border-2 border-indigo-200 focus:border-indigo-500 outline-none font-bold text-gray-700 bg-white">
-                   {folders.map(f => <option key={f} value={f}>{f}</option>)}
-                 </select>
-               </div>
-               <div className="flex flex-col justify-end">
-                 <button type="submit" disabled={isGeneratingCardsDirectly || !flashcardPrompt.trim()} className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-black px-6 py-3 rounded-xl flex items-center justify-center transition-all shadow-md transform hover:scale-105 active:scale-95 h-[52px]">
-                   {isGeneratingCardsDirectly ? <Loader2 className="w-5 h-5 mr-2 animate-spin"/> : <Zap className="w-5 h-5 mr-2"/>} 生成する
-                 </button>
-               </div>
-            </form>
-          )}
-
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-            {filteredListCards.length > 0 ? filteredListCards.map(card => (
-              isEditingCardId === card.id && editCardData ? (
-                <div key={card.id} className="border-2 border-indigo-300 bg-indigo-50/30 p-4 rounded-xl flex flex-col gap-3 animate-fade-in shadow-inner">
-                  <div className="flex flex-col md:flex-row gap-3">
-                    <div className="flex-1">
-                      <label className="text-xs font-bold text-gray-500 mb-1 block">表面（問題）</label>
-                      <input value={editCardData.front || ''} onChange={e => setEditCardData({...editCardData, front: e.target.value})} className="w-full border p-2 rounded-lg font-bold" />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs font-bold text-gray-500 mb-1 block">裏面（解答）</label>
-                      <textarea value={editCardData.back || ''} onChange={e => setEditCardData({...editCardData, back: e.target.value})} className="w-full border p-2 rounded-lg font-medium text-sm" rows={2} />
-                    </div>
-                  </div>
-                  <div className="flex flex-col md:flex-row gap-3 items-end justify-between border-t border-indigo-100 pt-3">
-                    <div className="flex gap-3 w-full md:w-auto">
-                      <div className="flex-1 md:flex-none">
-                        <label className="text-xs font-bold text-gray-500 mb-1 block">科目</label>
-                        <select value={editCardData.subject || SUBJECTS[0]} onChange={e => setEditCardData({...editCardData, subject: e.target.value})} className="w-full border p-2 rounded-lg font-bold text-sm bg-white">
-                          {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      </div>
-                      <div className="flex-1 md:flex-none">
-                        <label className="text-xs font-bold text-gray-500 mb-1 block">フォルダー</label>
-                        <select value={editCardData.folder || '未分類'} onChange={e => setEditCardData({...editCardData, folder: e.target.value})} className="w-full border p-2 rounded-lg font-bold text-sm bg-white">
-                          {folders.map(f => <option key={f} value={f}>{f}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 w-full md:w-auto mt-3 md:mt-0">
-                      <button onClick={() => setIsEditingCardId(null)} className="flex-1 md:flex-none px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-bold hover:bg-gray-300">キャンセル</button>
-                      <button onClick={saveFlashcardEdit} className="flex-1 md:flex-none px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 flex items-center justify-center"><Save size={16} className="mr-1.5"/>保存</button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div key={card.id} className="border-2 border-gray-100 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center hover:border-indigo-200 hover:shadow-md transition-all bg-white group gap-4">
-                  <div className="flex-1 w-full">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <span className="text-xs font-black bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100">{card.subject}</span>
-                      <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded border border-gray-200 flex items-center"><Folder size={12} className="mr-1"/>{card.folder || '未分類'}</span>
-                      {card.isMemorized && <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-200 flex items-center"><CheckCircle size={12} className="mr-1"/>暗記済</span>}
-                    </div>
-                    <div className="flex flex-col md:flex-row gap-2 md:gap-4">
-                      <div className="flex-1"><span className="text-xs text-gray-400 font-bold block mb-0.5">表面</span><h4 className="font-black text-lg text-gray-800">{card.front}</h4></div>
-                      <div className="flex-[2]"><span className="text-xs text-gray-400 font-bold block mb-0.5">裏面</span><p className="text-gray-600 text-sm font-medium">{card.back}</p></div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 md:gap-2 self-end md:self-auto shrink-0">
-                    <button onClick={() => { playSound('click'); setEditCardData(card); setIsEditingCardId(card.id); }} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Edit size={18}/></button>
-                    <button onClick={() => deleteFlashcard(card.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                  </div>
-                </div>
-              )
-            )) : (
-              <div className="text-center py-12 text-gray-400 font-bold bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
-                <Layers className="w-12 h-12 mx-auto mb-2 opacity-50"/>
-                カードがありません
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* 学習モードのフィルター */}
-          <div className="flex flex-wrap gap-2 md:gap-3 w-full border-b border-gray-200 pb-4">
-            <select 
-              value={flashcardSubject} 
-              onChange={(e) => { setFlashcardSubject(e.target.value); setFlashcardTheme('すべて'); playSound('click'); }}
-              className="border-2 border-gray-200 rounded-xl px-4 py-2 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-1 md:flex-none min-w-[100px] text-sm"
-            >
-              <option value="すべて">全科目</option>
-              {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select 
-              value={filterCardFolder} 
-              onChange={(e) => { setFilterCardFolder(e.target.value); playSound('click'); }}
-              className="border-2 border-gray-200 rounded-xl px-4 py-2 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-1 md:flex-none min-w-[120px] text-sm"
-            >
-              <option value="すべて">全フォルダー</option>
-              {folders.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-            <select 
-              value={flashcardTheme} 
-              onChange={(e) => { setFlashcardTheme(e.target.value); playSound('click'); }}
-              className="border-2 border-gray-200 rounded-xl px-4 py-2 font-bold text-gray-700 focus:outline-none focus:border-indigo-500 bg-white flex-[2] md:flex-none md:max-w-xs text-sm"
-            >
-              <option value="すべて">全テーマ(AI自動分類)</option>
-              {availableThemes.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-
-          <div className="flex-1 flex flex-col items-center justify-center p-4">
-            {pendingFlashcards.length > 0 && currentCard ? (
-              <>
-                <div className="w-full max-w-2xl aspect-[4/3] md:aspect-video perspective-1000 cursor-pointer group" onClick={() => { playSound('click'); setIsCardFlipped(!isCardFlipped); }}>
-                  <div className={`relative w-full h-full transition-transform duration-500 transform-style-preserve-3d ${isCardFlipped ? 'rotate-y-180' : ''}`}>
-                    {/* 表面 */}
-                    <div className="absolute inset-0 backface-hidden bg-white border-2 border-gray-200 rounded-3xl shadow-lg flex flex-col items-center justify-center p-6 md:p-8 group-hover:shadow-xl transition-shadow">
-                       <span className="absolute top-4 left-4 md:top-6 md:left-6 text-gray-400 font-bold">Q.</span>
-                       <span className="absolute top-4 right-4 md:top-6 md:right-6 text-indigo-500 font-bold bg-indigo-50 px-2 py-1 md:px-3 md:py-1 rounded-lg text-xs md:text-sm">
-                         {currentCard?.subject} {currentCard?.folder && currentCard.folder !== '未分類' ? `- ${currentCard.folder}` : ''}
-                       </span>
-                       <h3 className="text-3xl md:text-5xl font-black text-gray-800 text-center leading-tight">{currentCard?.front}</h3>
-                       <p className="absolute bottom-4 md:bottom-6 text-xs md:text-sm font-bold text-indigo-400 flex items-center"><RefreshCcw className="w-3 h-3 md:w-4 md:h-4 mr-1"/>タップして裏返す</p>
-                    </div>
-                    {/* 裏面 */}
-                    <div className="absolute inset-0 backface-hidden bg-indigo-50 border-2 border-indigo-200 rounded-3xl shadow-lg flex flex-col items-center justify-center p-6 md:p-12 rotate-y-180">
-                       <span className="absolute top-4 left-4 md:top-6 md:left-6 text-indigo-400 font-bold">A.</span>
-                       <p className="text-lg md:text-2xl font-bold text-gray-800 text-center leading-relaxed">{currentCard?.back}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* アクションボタン */}
-                <div className="flex items-center space-x-4 md:space-x-8 mt-8">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); playSound('click'); setIsCardFlipped(false); setTimeout(() => setCurrentCardIndex(prev => prev > 0 ? prev - 1 : pendingFlashcards.length - 1), 150); }}
-                    className="p-3 md:p-4 bg-white rounded-full shadow-md hover:bg-gray-50 border border-gray-100 transition-transform hover:scale-110"
-                  >
-                    <ChevronLeft className="w-5 h-5 md:w-6 md:h-6 text-gray-600" />
-                  </button>
-                  
-                  <button
-                    onClick={(e) => handleMemorizedCard(e, currentCard.id)}
-                    className="px-6 py-3 md:px-8 md:py-4 bg-green-500 hover:bg-green-600 text-white rounded-full font-black shadow-lg flex items-center transition-all transform hover:scale-105 active:scale-95 text-sm md:text-lg"
-                  >
-                    <CheckCircle className="w-5 h-5 md:w-6 md:h-6 mr-2" /> 覚えた！
-                  </button>
-                  
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); playSound('click'); setIsCardFlipped(false); setTimeout(() => setCurrentCardIndex(prev => prev < pendingFlashcards.length - 1 ? prev + 1 : 0), 150); }}
-                    className="p-3 md:p-4 bg-indigo-600 rounded-full shadow-md hover:bg-indigo-700 text-white transition-transform hover:scale-110"
-                  >
-                    <ChevronRight className="w-5 h-5 md:w-6 md:h-6" />
-                  </button>
-                </div>
-                <p className="font-bold text-gray-400 mt-4 text-sm">残り {pendingFlashcards.length} 枚</p>
-              </>
-            ) : (
-              <div className="text-center text-gray-500 font-bold bg-white p-10 rounded-3xl border-2 border-dashed border-gray-200 animate-pop">
-                <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" />
-                <h3 className="text-2xl font-black text-gray-800 mb-2">すべて覚えました！</h3>
-                <p className="mb-6">この条件の未学習カードはありません。</p>
-                <button
-                  onClick={() => {
-                    playSound('click');
-                    if(!user) return;
-                    flashcards.forEach(async (c) => {
-                      if ((flashcardSubject === 'すべて' || c.subject === flashcardSubject) && 
-                          (flashcardTheme === 'すべて' || c.theme === flashcardTheme) &&
-                          (filterCardFolder === 'すべて' || (c.folder || '未分類') === filterCardFolder)) {
-                            try {
-                              await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', c.id), { isMemorized: false });
-                            } catch(e){}
-                      }
-                    });
-                  }}
-                  className="px-6 py-3 bg-indigo-50 text-indigo-600 rounded-full font-bold shadow-sm hover:bg-indigo-100 border border-indigo-200 transition-colors"
-                >
-                  もう一度最初から学習する
-                </button>
-              </div>
-            )}
-          </div>
-        </>
+      
+      {showFlashcardGenerator && (
+        <form onSubmit={handleGenerateFlashcards} className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100 flex flex-col md:flex-row gap-4 mb-2 animate-fade-in shadow-inner shrink-0">
+           <div className="flex flex-col flex-1">
+             <label className="text-xs font-bold text-indigo-800 mb-1">科目</label>
+             <select 
+               value={flashcardGenSubject} 
+               onChange={e => setFlashcardGenSubject(e.target.value)}
+               className="p-3 rounded-xl border-2 border-indigo-200 focus:border-indigo-500 outline-none font-bold text-gray-700 bg-white"
+             >
+               {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+             </select>
+           </div>
+           <div className="flex flex-col flex-[2]">
+             <label className="text-xs font-bold text-indigo-800 mb-1">テーマ・単元を入力</label>
+             <input 
+               type="text" 
+               placeholder="例: 平安時代の文化、助動詞の用法など" 
+               value={flashcardPrompt} 
+               onChange={e => setFlashcardPrompt(e.target.value)}
+               className="p-3 rounded-xl border-2 border-indigo-200 focus:border-indigo-500 outline-none font-bold text-gray-800"
+             />
+           </div>
+           <div className="flex flex-col justify-end">
+             <button 
+               type="submit" 
+               disabled={isGeneratingCardsDirectly || !flashcardPrompt.trim()}
+               className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-black px-6 py-3 rounded-xl flex items-center justify-center transition-all shadow-md transform hover:scale-105 active:scale-95"
+             >
+               {isGeneratingCardsDirectly ? <Loader2 className="w-5 h-5 mr-2 animate-spin"/> : <Zap className="w-5 h-5 mr-2"/>} 
+               生成する
+             </button>
+           </div>
+        </form>
       )}
+
+      <div className="flex-1 flex flex-col items-center justify-center p-4">
+        {pendingFlashcards.length > 0 ? (
+          <>
+            <div className="w-full max-w-2xl aspect-[4/3] md:aspect-video perspective-1000 cursor-pointer group" onClick={() => { playSound('click'); setIsCardFlipped(!isCardFlipped); }}>
+              <div className={`relative w-full h-full transition-transform duration-500 transform-style-preserve-3d ${isCardFlipped ? 'rotate-y-180' : ''}`}>
+                {/* 表面 */}
+                <div className="absolute inset-0 backface-hidden bg-white border-2 border-gray-200 rounded-3xl shadow-lg flex flex-col items-center justify-center p-6 md:p-8 group-hover:shadow-xl transition-shadow">
+                   <span className="absolute top-4 left-4 md:top-6 md:left-6 text-gray-400 font-bold">Q.</span>
+                   <span className="absolute top-4 right-4 md:top-6 md:right-6 text-indigo-500 font-bold bg-indigo-50 px-2 py-1 md:px-3 md:py-1 rounded-lg text-xs md:text-sm">
+                     {pendingFlashcards[currentCardIndex].subject} {pendingFlashcards[currentCardIndex].theme && `- ${pendingFlashcards[currentCardIndex].theme}`}
+                   </span>
+                   <h3 className="text-3xl md:text-5xl font-black text-gray-800 text-center leading-tight">{pendingFlashcards[currentCardIndex].front}</h3>
+                   <p className="absolute bottom-4 md:bottom-6 text-xs md:text-sm font-bold text-indigo-400 flex items-center"><RefreshCcw className="w-3 h-3 md:w-4 md:h-4 mr-1"/>タップして裏返す</p>
+                </div>
+                {/* 裏面 */}
+                <div className="absolute inset-0 backface-hidden bg-indigo-50 border-2 border-indigo-200 rounded-3xl shadow-lg flex flex-col items-center justify-center p-6 md:p-12 rotate-y-180">
+                   <span className="absolute top-4 left-4 md:top-6 md:left-6 text-indigo-400 font-bold">A.</span>
+                   <p className="text-lg md:text-2xl font-bold text-gray-800 text-center leading-relaxed">{pendingFlashcards[currentCardIndex].back}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* アクションボタン */}
+            <div className="flex items-center space-x-4 md:space-x-8 mt-8">
+              <button 
+                onClick={(e) => { e.stopPropagation(); playSound('click'); setIsCardFlipped(false); setTimeout(() => setCurrentCardIndex(prev => prev > 0 ? prev - 1 : pendingFlashcards.length - 1), 150); }}
+                className="p-3 md:p-4 bg-white rounded-full shadow-md hover:bg-gray-50 border border-gray-100 transition-transform hover:scale-110"
+              >
+                <ChevronLeft className="w-5 h-5 md:w-6 md:h-6 text-gray-600" />
+              </button>
+              
+              <button
+                onClick={handleMemorizedCard}
+                className="px-6 py-3 md:px-8 md:py-4 bg-green-500 hover:bg-green-600 text-white rounded-full font-black shadow-lg flex items-center transition-all transform hover:scale-105 active:scale-95 text-sm md:text-lg"
+              >
+                <CheckCircle className="w-5 h-5 md:w-6 md:h-6 mr-2" /> 覚えた！
+              </button>
+              
+              <button 
+                onClick={(e) => { e.stopPropagation(); playSound('click'); setIsCardFlipped(false); setTimeout(() => setCurrentCardIndex(prev => prev < pendingFlashcards.length - 1 ? prev + 1 : 0), 150); }}
+                className="p-3 md:p-4 bg-indigo-600 rounded-full shadow-md hover:bg-indigo-700 text-white transition-transform hover:scale-110"
+              >
+                <ChevronRight className="w-5 h-5 md:w-6 md:h-6" />
+              </button>
+            </div>
+            <p className="font-bold text-gray-400 mt-4 text-sm">残り {pendingFlashcards.length} 枚</p>
+          </>
+        ) : (
+          <div className="text-center text-gray-500 font-bold bg-white p-10 rounded-3xl border-2 border-dashed border-gray-200 animate-pop">
+            <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-400" />
+            <h3 className="text-2xl font-black text-gray-800 mb-2">すべて覚えました！</h3>
+            <p className="mb-6">この条件の未学習カードはありません。</p>
+            <button
+              onClick={() => {
+                playSound('click');
+                setFlashcards(flashcards.map(c => 
+                  (flashcardSubject === 'すべて' || c.subject === flashcardSubject) && 
+                  (flashcardTheme === 'すべて' || c.theme === flashcardTheme) 
+                    ? { ...c, isMemorized: false } 
+                    : c
+                ));
+              }}
+              className="px-6 py-3 bg-indigo-50 text-indigo-600 rounded-full font-bold shadow-sm hover:bg-indigo-100 border border-indigo-200 transition-colors"
+            >
+              もう一度最初から学習する
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
-};
 
   const renderRoadmap = () => {
     const currentRoadmapSteps = getRoadmapSteps();
@@ -2606,44 +2157,17 @@ ${AI_STRICT_RULES}`;
       total: subjectStats[s].total
     })).sort((a, b) => b.total - a.total); 
 
-    const totalErrors = errorStats.concept + errorStats.prerequisite + errorStats.careless + errorStats.reading;
-    const errorPercentages = totalErrors > 0 ? {
-      concept: Math.round((errorStats.concept / totalErrors) * 100),
-      prerequisite: Math.round((errorStats.prerequisite / totalErrors) * 100),
-      careless: Math.round((errorStats.careless / totalErrors) * 100),
-      reading: Math.round((errorStats.reading / totalErrors) * 100),
-    } : { concept: 0, prerequisite: 0, careless: 0, reading: 0 };
-
-    const getPrimaryBottleneck = () => {
-      if (totalErrors === 0) return null;
-      let maxKey = 'concept';
-      let maxVal = errorStats.concept;
-      if (errorStats.prerequisite > maxVal) { maxKey = 'prerequisite'; maxVal = errorStats.prerequisite; }
-      if (errorStats.careless > maxVal) { maxKey = 'careless'; maxVal = errorStats.careless; }
-      if (errorStats.reading > maxVal) { maxKey = 'reading'; maxVal = errorStats.reading; }
-      
-      const details = {
-        concept: { title: "概念理解の欠如", desc: "単元の根本的な意味が掴めていません。AIノートで「図解・全体像」を読み直しましょう。", color: "bg-red-500", bg: "bg-red-50", text: "text-red-700" },
-        prerequisite: { title: "前提知識の抜け漏れ", desc: "今の単元を解くための、前の学年の知識が抜けています。「AIアシスタント」に前提知識の解説を頼んでみましょう。", color: "bg-orange-500", bg: "bg-orange-50", text: "text-orange-700" },
-        careless: { title: "処理・計算ミス", desc: "考え方は合っていますが、最後の処理でミスをしています。見直しを徹底し、基礎計算ドリルを反復しましょう。", color: "bg-yellow-500", bg: "bg-yellow-50", text: "text-yellow-700" },
-        reading: { title: "読解力・条件見落とし", desc: "問題文の「〜ではないもの」などの条件を読み飛ばしています。問題に線を引くなど、読解のクセをつけましょう。", color: "bg-blue-500", bg: "bg-blue-50", text: "text-blue-700" }
-      };
-      return details[maxKey];
-    };
-    
-    const bottleneck = getPrimaryBottleneck();
-
     return (
       <div className="space-y-8 animate-fade-in max-w-4xl mx-auto pb-12">
         <div className="flex items-center border-b-2 border-gray-200 pb-4 mb-6">
           <BarChart2 className="w-8 h-8 mr-3 text-indigo-600" />
           <div>
             <h2 className="text-2xl font-black text-gray-800">学習レポート・分析</h2>
-            <p className="text-sm font-bold text-gray-500">CBRA（認知ボトルネック・リバース解析）に基づく習熟度とエラー原因</p>
+            <p className="text-sm font-bold text-gray-500">実際の演習データに基づく習熟度</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
           <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-gray-200">
             <h3 className="text-lg font-black text-gray-800 mb-6 flex items-center"><Target className="w-5 h-5 mr-2 text-blue-500"/>科目別 習熟度（実データ）</h3>
             {subjectScores.length > 0 ? (
@@ -2672,77 +2196,28 @@ ${AI_STRICT_RULES}`;
             )}
           </div>
 
-          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-gray-200">
-             <h3 className="text-lg font-black text-gray-800 mb-2 flex items-center"><Brain className="w-5 h-5 mr-2 text-purple-500"/>エラー要因分析 (CBRA)</h3>
-             <p className="text-xs font-bold text-gray-500 mb-6">AIが不正解の「なぜ」を4次元で分類した結果です。</p>
-             
-             {totalErrors > 0 ? (
-               <div className="space-y-4">
-                 {[
-                   { label: '概念理解の欠如', value: errorPercentages.concept, count: errorStats.concept, color: 'bg-red-500' },
-                   { label: '前提知識の抜け', value: errorPercentages.prerequisite, count: errorStats.prerequisite, color: 'bg-orange-500' },
-                   { label: '処理・計算ミス', value: errorPercentages.careless, count: errorStats.careless, color: 'bg-yellow-500' },
-                   { label: '読解・条件見落とし', value: errorPercentages.reading, count: errorStats.reading, color: 'bg-blue-500' }
-                 ].map((stat, i) => (
-                   <div key={i}>
-                      <div className="flex justify-between items-center text-xs font-bold text-gray-600 mb-1.5">
-                        <span>{stat.label}</span>
-                        <span>{stat.value}% <span className="text-gray-400 font-normal ml-1">({stat.count}回)</span></span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-2.5">
-                        <div className={`h-2.5 rounded-full transition-all duration-1000 ${stat.color}`} style={{width: `${stat.value}%`}}></div>
-                      </div>
-                   </div>
-                 ))}
-               </div>
-             ) : (
-                <div className="text-center text-gray-500 font-bold py-10 bg-gray-50 rounded-2xl border-2 border-dashed">
-                  <p>エラーデータなし</p>
+          <div className="space-y-6 md:space-y-8">
+            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-gray-200">
+              <h3 className="text-lg font-black text-gray-800 mb-2 flex items-center"><Zap className="w-5 h-5 mr-2 text-yellow-500"/>重点補強エリア</h3>
+              <p className="text-sm font-bold text-gray-500 mb-4">データから導かれた最優先課題</p>
+              {weaknesses.length > 0 ? (
+                <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                  <p className="font-black text-red-700">{weaknesses[0]}</p>
+                  <p className="text-xs text-red-600 mt-1 font-bold">この分野の正答率が低下傾向にあります。</p>
                 </div>
-             )}
-          </div>
-        </div>
-
-        <div className="space-y-6 md:space-y-8">
-          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-black text-gray-800 mb-2 flex items-center"><Zap className="w-5 h-5 mr-2 text-yellow-500"/>最優先ボトルネックと処方箋</h3>
-            <p className="text-sm font-bold text-gray-500 mb-4">データから導かれたスコア停滞の根本原因</p>
-            {bottleneck ? (
-              <div className={`${bottleneck.bg} p-5 rounded-2xl border ${bottleneck.text.replace('text-', 'border-').replace('700', '200')}`}>
-                <div className="flex items-center mb-3">
-                   <span className={`w-3 h-3 rounded-full ${bottleneck.color} mr-2 animate-pulse`}></span>
-                   <p className={`font-black text-lg ${bottleneck.text}`}>{bottleneck.title}</p>
+              ) : (
+                <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+                  <p className="font-black text-green-700">特になし</p>
                 </div>
-                <p className={`text-sm font-bold ${bottleneck.text} opacity-80 leading-relaxed`}>{bottleneck.desc}</p>
-                {weaknesses.length > 0 && (
-                   <div className="mt-4 pt-4 border-t border-white/40">
-                     <p className={`text-xs font-black ${bottleneck.text} opacity-70 mb-2`}>現在の影響単元:</p>
-                     <div className="flex gap-2 flex-wrap">
-                       {weaknesses.map(w => <span key={w} className={`px-2 py-1 rounded bg-white/50 text-xs font-bold ${bottleneck.text}`}>{w}</span>)}
-                     </div>
-                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="bg-green-50 p-4 rounded-xl border border-green-100">
-                <p className="font-black text-green-700">データ不足、または弱点なし</p>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          <div className="bg-indigo-900 p-6 md:p-8 rounded-3xl shadow-md text-white relative overflow-hidden">
-             <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full mix-blend-overlay filter blur-2xl opacity-20 transform translate-x-1/2 -translate-y-1/2"></div>
-             <h3 className="text-lg font-black mb-3 flex items-center"><MessageCircle className="w-5 h-5 mr-2"/>AI総括コメント</h3>
-             <p className="text-indigo-100 text-sm md:text-base font-bold leading-relaxed">
-               現在の総合正答率は{accuracyRate}%です。
-               {bottleneck ? `単なる単元の復習だけでなく、「${bottleneck.title}」を意識した学習を行うことで、全体のスコアが底上げされる可能性が高いです。AIアシスタントに「今の自分に合った処方箋ドリルを作って」とリクエストしてみましょう。` : '継続して学習を進めてください。'}
-             </p>
-             <button 
-                onClick={() => { playSound('click'); handleTabChange('chat'); setChatInput(bottleneck ? `私の弱点「${bottleneck.title}」を克服するための、3分で終わる処方箋ドリル（基礎問題3問）を作成してください。` : '今後の学習アドバイスをください。'); }}
-                className="mt-6 px-6 py-3 bg-white text-indigo-900 rounded-full font-black text-sm shadow-lg hover:bg-indigo-50 transition-colors flex items-center"
-             >
-                <Zap className="w-4 h-4 mr-2 text-yellow-500" /> AIに処方箋ドリルを作成してもらう
-             </button>
+            <div className="bg-indigo-900 p-6 md:p-8 rounded-3xl shadow-md text-white">
+               <h3 className="text-lg font-black mb-2">総括コメント</h3>
+               <p className="text-indigo-200 text-xs md:text-sm font-bold leading-relaxed">
+                 現在の総合正答率は{accuracyRate}%です。基礎知識の定着は見られますが、{userProfile.weakSubjects.length > 0 ? `${userProfile.weakSubjects.join('・')}の演習量不足` : '応用問題での失点'}が課題として推測されます。学習ロードマップに従い、計画的な演習を継続してください。
+               </p>
+            </div>
           </div>
         </div>
       </div>
@@ -2822,46 +2297,6 @@ ${AI_STRICT_RULES}`;
 
   return (
     <div className="flex h-screen bg-[#F1F5F9] font-sans text-gray-900 overflow-hidden relative">
-      {/* 設定モーダル */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[200] p-4 animate-fade-in">
-          <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl animate-pop">
-            <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
-              <h3 className="text-xl font-black text-gray-800 flex items-center"><Settings className="w-6 h-6 mr-2 text-indigo-600"/>システム設定</h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><XCircle size={28}/></button>
-            </div>
-            <div className="space-y-6">
-              <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-2xl text-sm font-bold text-yellow-800 leading-relaxed shadow-inner">
-                ⚠️ 現在、環境側のセキュリティ制限によりAIとの自動通信に制限(401エラー)が発生しています。<br/><br/>
-                ご自身のGemini APIキーを入力することで、この制限を回避してアプリを正常に動作させることができます。
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center"><Key className="w-4 h-4 mr-1.5"/> Gemini APIキー (AIza...)</label>
-                <input 
-                  type="password" 
-                  placeholder="キーを入力してください" 
-                  value={tempApiKey}
-                  onChange={e => setTempApiKey(e.target.value)}
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 font-mono text-sm focus:border-indigo-500 outline-none transition-colors"
-                />
-                <p className="text-[10px] text-gray-400 mt-2 font-bold">※キーはブラウザのローカルにのみ保存され、外部には送信されません。</p>
-              </div>
-              <button 
-                onClick={() => { 
-                  playSound('click');
-                  localStorage.setItem('gemini_api_key', tempApiKey); 
-                  setShowSettings(false); 
-                  showToast('APIキーを保存・適用しました', 'success'); 
-                }}
-                className="w-full bg-gray-900 hover:bg-black text-white font-black py-4 rounded-xl transition-all transform hover:scale-105 active:scale-95 shadow-xl flex items-center justify-center text-lg"
-              >
-                保存して閉じる
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {toast.show && (
         <div className={`fixed top-6 right-6 px-6 py-4 rounded-2xl shadow-2xl z-[150] animate-pop flex items-center text-white ${toast.type === 'error' ? 'bg-red-600' : toast.type === 'success' ? 'bg-green-600' : 'bg-yellow-500'}`}>
           {toast.type === 'error' ? <AlertCircle className="w-6 h-6 mr-3" /> : toast.type === 'success' ? <CheckCircle className="w-6 h-6 mr-3" /> : <Timer className="w-6 h-6 mr-3" />}
@@ -2915,26 +2350,14 @@ ${AI_STRICT_RULES}`;
                 <Sparkles className="w-6 h-6 md:w-8 md:h-8 text-yellow-300 absolute top-0 -right-4 animate-pulse" />
                 <Star className="w-5 h-5 md:w-6 md:h-6 text-yellow-200 absolute bottom-4 -left-4 animate-bounce" />
               </div>
-              <h1 className="text-3xl md:text-4xl font-extrabold mb-2 md:mb-3 tracking-tight">CycLearnへようこそ</h1>
-              <p className="text-blue-100 font-bold text-sm md:text-lg">プロフィールを入力して学習アカウントを作成しましょう。</p>
+              <h1 className="text-3xl md:text-4xl font-extrabold mb-2 md:mb-3 tracking-tight">SmartLearnへようこそ</h1>
+              <p className="text-blue-100 font-bold text-sm md:text-lg">プロファイリングを実行します。情報を入力してください。</p>
             </div>
             
             <div className="p-6 md:p-10 space-y-6 md:space-y-8">
               <div className="animate-fade-in" style={{animationDelay: '0.1s'}}>
                 <label className="text-sm font-bold text-gray-700 mb-2 md:mb-3 flex items-center">
-                  <UserCircle className="w-5 h-5 md:w-6 md:h-6 mr-2 text-indigo-500" /> アカウント名（ニックネーム）
-                </label>
-                <input 
-                  type="text" 
-                  value={userProfile.username}
-                  onChange={e => setUserProfile({...userProfile, username: e.target.value})}
-                  placeholder="名前を入力してください"
-                  className="w-full border-2 border-gray-200 rounded-xl p-3 md:p-4 focus:border-indigo-500 focus:ring-0 outline-none text-base md:text-lg bg-gray-50 hover:bg-white transition-colors font-bold"
-                />
-              </div>
-              <div className="animate-fade-in" style={{animationDelay: '0.15s'}}>
-                <label className="text-sm font-bold text-gray-700 mb-2 md:mb-3 flex items-center">
-                  <GraduationCap className="w-5 h-5 md:w-6 md:h-6 mr-2 text-indigo-500" /> 学年
+                  <UserCircle className="w-5 h-5 md:w-6 md:h-6 mr-2 text-indigo-500" /> 学年
                 </label>
                 <select 
                   value={userProfile.grade}
@@ -3007,7 +2430,7 @@ ${AI_STRICT_RULES}`;
                 onClick={finishSetup}
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-lg md:text-xl py-4 md:py-5 rounded-2xl shadow-xl transition-all transform hover:-translate-y-1 hover:shadow-2xl flex justify-center items-center mt-2 md:mt-4 active:scale-95"
               >
-                アカウントを作成して始める <ArrowRight className="ml-2 w-6 h-6 md:w-7 md:h-7" />
+                設定を完了し、学習を開始 <ArrowRight className="ml-2 w-6 h-6 md:w-7 md:h-7" />
               </button>
             </div>
           </div>
@@ -3021,18 +2444,13 @@ ${AI_STRICT_RULES}`;
                 <GraduationCap size={28} />
               </div>
               <span className="text-2xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-indigo-700">
-                CycLearn
+                SmartLearn
               </span>
             </div>
             
-            <div className="px-8 py-5 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 flex justify-between items-center">
-              <div>
-                <p className="text-xs font-black text-indigo-400 mb-1 uppercase tracking-wider">Account</p>
-                <p className="text-base font-black text-indigo-900 flex items-center"><UserCircle className="w-5 h-5 mr-2 text-indigo-500"/>{userProfile.username || 'ゲスト'}さん</p>
-              </div>
-              <button onClick={() => setShowSettings(true)} className="p-2 text-indigo-400 hover:bg-indigo-100 hover:text-indigo-700 rounded-full transition-colors" title="システム設定">
-                 <Settings size={20} />
-              </button>
+            <div className="px-8 py-5 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <p className="text-xs font-black text-indigo-400 mb-1 uppercase tracking-wider">Profile</p>
+              <p className="text-base font-black text-indigo-900 flex items-center"><UserCircle className="w-5 h-5 mr-2 text-indigo-500"/>{userProfile.grade}</p>
             </div>
 
             <nav className="flex-1 p-6 space-y-3 overflow-y-auto">
@@ -3064,12 +2482,8 @@ ${AI_STRICT_RULES}`;
                 <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2 rounded-lg text-white">
                   <GraduationCap size={20} />
                 </div>
-                <span className="font-black text-lg text-indigo-900">CycLearn</span>
-                {userProfile.username && <span className="ml-2 text-xs font-bold text-gray-500 border-l border-gray-300 pl-2">{userProfile.username}</span>}
+                <span className="font-black text-lg text-indigo-900">SmartLearn</span>
               </div>
-              <button onClick={() => setShowSettings(true)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
-                <Settings size={22}/>
-              </button>
             </div>
 
             <div className="h-full p-4 md:p-10 relative z-10">
